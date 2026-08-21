@@ -37,13 +37,12 @@ import { queueRouter } from "./modules/queue/queue.routes.js";
 import { aiRecommendationsRouter } from "./modules/aiRecommendations/aiRecommendations.routes.js";
 import { aiRecommendationsGenerateRouter } from "./modules/aiRecommendations/aiRecommendationsGenerate.routes.js";
 import { mutesRouter } from "./modules/mutes/mutes.routes.js";
-import { newCrawlRouter } from "./modules/newCrawl/newCrawl.routes.js";
+import { crawlRunRouter } from "./modules/crawlRun/crawlRun.routes.js";
 import { automationRouter } from "./modules/automation/automation.routes.js";
 import { fixPlanRouter } from "./modules/fixPlan/fixPlan.routes.js";
 import { appliedFixesRouter } from "./modules/appliedFixes/appliedFixes.routes.js";
 import { sourcesRouter } from "./modules/sources/sources.routes.js";
 import { aiAccessRouter } from "./modules/aiAccess/aiAccess.routes.js";
-import { crawlLifecycleRouter } from "./modules/crawlLifecycle/crawlLifecycle.routes.js";
 import { exportsRouter, crawlExportsRouter } from "./modules/exports/exports.routes.js";
 import { comparisonsRouter } from "./modules/comparisons/comparisons.routes.js";
 import { tunnelPublicRouter, tunnelRouter } from "./modules/tunnel/tunnel.routes.js";
@@ -66,8 +65,7 @@ export function createApp(): express.Express {
 
   // --- protected modules ---
   app.use("/api/crawls", crawlsRouter);
-  app.use("/api/crawls", newCrawlRouter); // POST / -> 501 (crawls run in the crawler worker, not here)
-  app.use("/api/crawls", crawlLifecycleRouter); // /:runId/{cancel,rerun,reanalyze,progress,events} -> 501 (crawler worker not in this deployment)
+  app.use("/api/crawls", crawlRunRouter); // POST / (start) + /:runId/{cancel,rerun,reanalyze,progress,events} — real crawl execution via the vendored worker
   app.use("/api/crawls", pagesRouter); // /:runId/pages, /:runId/pages/:pageId
   app.use("/api/crawls", issuesRouter); // /:runId/issues
   app.use("/api/crawls", crawlMetaRouter); // /:runId/meta (GET/PATCH)

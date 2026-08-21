@@ -1,0 +1,36 @@
+{
+  "name": "seo-crawler-poc",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "POC-1 crawler for the Autonomous SEO Platform — hybrid static-first Crawlee crawler with Playwright escalation",
+  "scripts": {
+    "postinstall": "node scripts/patch-crawlee-windowshide.mjs",
+    "crawl": "tsx src/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "bench": "tsx scripts/bench.ts",
+    "analyze": "tsx src/analysis/cli.ts",
+    "analyze:automation": "tsx src/analysis/automation/cli.ts",
+    "fixplan": "tsx src/analysis/fixplan/cli.ts",
+    "wp": "tsx src/wordpress/cli.ts",
+    "diff": "tsx src/diff/cli.ts",
+    "graph": "tsx src/graph/cli.ts"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0",
+    "crawlee": "^3.13.0",
+    "fast-xml-parser": "^4.5.0",
+    "playwright": "^1.52.0",
+    "robots-parser": "^3.0.1",
+    "stream-chain": "^2.2.5",
+    "stream-json": "^1.9.1",
+    "tldts": "^6.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

@@ -11,6 +11,11 @@ import { fileURLToPath } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const envPath = path.resolve(here, "../../.env");
 
+// The server dir (…/server) — the anchor for the vendored crawler defaults below. Resolved from
+// THIS file's location (…/server/src/config), never process.cwd(), so the paths are stable no
+// matter where the process was launched from (tsx watch, dist, a test runner).
+const serverDir = path.resolve(here, "../..");
+
 try {
   // Native loader (Node 20.6+). If the shell already exported the vars, the file may be absent —
   // that is fine, the required-check below is the real gate.
@@ -52,5 +57,30 @@ export const env = {
     tokenKey: process.env.GSC_TOKEN_KEY?.trim() || null,
     // Default sync window (days) for the explicit "Sync" action.
     syncDays: Number(process.env.GSC_SYNC_DAYS) || 28,
+  },
+
+  // --- Crawl execution (vendored crawler worker; all OPTIONAL) ---
+  // POST /api/crawls spawns the worker at `projectDir` as a child process. Defaults resolve the
+  // VENDORED copy at server/crawler from the server dir (not cwd), so a checkout works with no env.
+  crawler: {
+    // Where `src/index.ts` / `src/analysis/cli.ts` live — the spawn cwd. Override with an absolute
+    // (or server-dir-relative) path to point at an external crawler checkout.
+    projectDir: process.env.CRAWLER_PROJECT_DIR
+      ? path.resolve(serverDir, process.env.CRAWLER_PROJECT_DIR)
+      : path.join(serverDir, "crawler"),
+    // Where per-run evidence dirs land: <storageRunsDir>/<runId>/. The worker is spawned with
+    // `--out storage` relative to projectDir, so this MUST stay <projectDir>/storage/runs unless
+    // the override also changes what the worker is told.
+    storageRunsDir:
+      process.env.CRAWLER_STORAGE_DIR?.trim()
+        ? path.resolve(serverDir, process.env.CRAWLER_STORAGE_DIR)
+        : path.join(
+            process.env.CRAWLER_PROJECT_DIR ? path.resolve(serverDir, process.env.CRAWLER_PROJECT_DIR) : path.join(serverDir, "crawler"),
+            "storage",
+            "runs",
+          ),
+    // Kill switch: CRAWL_EXECUTION_ENABLED=false makes POST /api/crawls answer the honest 501 stub
+    // again (no spawn), for read-only / Supabase-only deployments. Defaults ON.
+    executionEnabled: process.env.CRAWL_EXECUTION_ENABLED !== "false",
   },
 } as const;

@@ -1,0 +1,6 @@
+node_modules/
+# Leading slash anchors this to the project root — a bare `storage/` also matched src/storage/,
+# which silently kept the RunStore source out of git entirely.
+/storage/
+dist/
+*.log

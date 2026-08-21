@@ -75,12 +75,26 @@ dependency (the `seo-crawler-poc` worker, not in this repo).
 - [ ] Minor leftovers: exports/AI-recs `sync` HTTP endpoints, rules-run skipped/errored manifest,
   raw-HTML `hasRawHtml` derivation edge cases.
 
-## Deferred — needs the `seo-crawler-poc` worker (not in this repo)
+## Crawl execution — DONE (worker vendored into the backend)
 
-- [deferred] **Run a crawl** (`POST /crawls` → 501 by design).
-- [deferred] **Cancel / rerun / reanalyze / live progress / live events** — honest 501 stubs shipped;
-  real behavior needs the worker.
-- [deferred] **GSC `crawl-reason`** (queue crawler for excluded URLs) — honest 501.
+The `seo-crawler-poc` worker is now **vendored at `server/crawler/`** and spawned as a child process
+by the backend. Verified end-to-end: `POST /api/crawls` crawled example.com → auto-analyzed → synced
+to Supabase (`healthScore 72.7`, pages + 15 findings), and `DELETE` removed it cleanly.
+
+- [x] **Run a crawl** — `POST /api/crawls` spawns the vendored worker (`node --import tsx crawler/src/index.ts`),
+  creates a `RUNNING` Crawl row, and on exit runs analyze → `syncRunToPostgres` → finalizes the row.
+- [x] **Status poll** — `GET /api/crawls/:runId` extended to the `CrawlStatusResponse` superset (`state`,
+  `reportReady`, `exitCode`, `log`, `note`) so the New-Crawl page's poll loop terminates.
+- [x] **Cancel** (process-tree kill: `taskkill /T /F` win / `kill -pid` posix), **rerun**, **reanalyze**,
+  **progress** (page-file counters), **queue** (RUNNING rows surface automatically).
+- [x] **Live events** — `GET /:runId/events` SSE tails `events.ndjson`. Works with a bearer/`AUTH_REQUIRED=false`;
+  in-browser `EventSource` can't send a bearer, so live activity needs a token-in-query or public-mount tweak
+  (progress polling is the primary, fully-working mechanism). ← only open sub-item.
+- [x] Config: `CRAWLER_PROJECT_DIR`, `CRAWLER_STORAGE_DIR`, `CRAWL_EXECUTION_ENABLED` (env, all optional).
+- [deferred] **GSC `crawl-reason`** (queue crawler for excluded URLs) — still an honest 501.
+
+**Prereq:** the vendored `server/crawler` has its deps + Chromium installed (`npm install` +
+`npx playwright install chromium`). Crawls run **one at a time** (single-crawl lock).
 
 ---
 

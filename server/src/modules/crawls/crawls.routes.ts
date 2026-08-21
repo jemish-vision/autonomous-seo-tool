@@ -14,6 +14,7 @@ import { asyncHandler } from "../../middleware/error.js";
 import { prisma } from "../../db/prisma.js";
 import { isSafeId } from "../../lib/apiShared.js";
 import { dbListCrawlRuns, dbGetCrawlRun, dbReadCrawlSkipped } from "../../db/src/crawl/readStore.js";
+import { getRunStateExtras, diskStatusExists } from "../crawlRun/crawlRunner.js";
 
 export const crawlsRouter = Router();
 
@@ -25,17 +26,46 @@ crawlsRouter.get(
   }),
 );
 
+/**
+ * GET /:runId — SUPERSET. Keeps the historic report body ({ report, robots, sitemaps, blocked,
+ * failures, skipped }) AND adds the live-crawl fields the New Crawl page polls on
+ * (CrawlStatusResponse): { runId, state, exitCode, log, reportReady, note? }.
+ *
+ * Disk status is consulted FIRST for an in-flight run (its report is empty until close) — that lives
+ * inside getRunStateExtras, which reconciles a dead pid and falls back to the DB Crawl.status for
+ * imported/older runs with no disk status file. A run that is genuinely unknown (no DB row AND no
+ * disk status) still 404s.
+ */
 crawlsRouter.get(
   "/:runId",
   asyncHandler(async (req, res) => {
     const { runId } = req.params;
-    const detail = await dbGetCrawlRun(prisma, runId);
+    if (!isSafeId(runId)) {
+      res.status(422).json({ error: "runId must be a safe id.", runId });
+      return;
+    }
+
+    const [detail, crawlRow] = await Promise.all([
+      dbGetCrawlRun(prisma, runId),
+      prisma.crawl.findFirst({ where: { slug: runId, deletedAt: null }, select: { status: true } }),
+    ]);
+
     if (!detail) {
+      // No synced data yet — but a just-started run has a disk status before its first page lands.
+      if (await diskStatusExists(runId)) {
+        const extras = await getRunStateExtras(runId, crawlRow?.status ?? null);
+        res.json({ runId, ...extras });
+        return;
+      }
       res.status(404).json({ error: "Run not found", runId });
       return;
     }
-    const skipped = await dbReadCrawlSkipped(prisma, runId);
-    res.json({ ...detail, skipped });
+
+    const [skipped, extras] = await Promise.all([
+      dbReadCrawlSkipped(prisma, runId),
+      getRunStateExtras(runId, crawlRow?.status ?? null),
+    ]);
+    res.json({ ...detail, skipped, runId, ...extras });
   }),
 );
 
