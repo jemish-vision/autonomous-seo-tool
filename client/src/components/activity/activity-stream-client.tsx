@@ -4,6 +4,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { EventRow, type ActivityEvent } from "./event-row";
 import { ActivityFilters, type StatusFilter } from "./activity-filters";
 import { statusBucket, ALL_KNOWN_KINDS } from "@/lib/events-view";
+import { getAccessToken, API_BASE } from "@/lib/api";
 import { cn } from "@/lib/cn";
 
 type ConnState = "connecting" | "open" | "reconnecting" | "complete" | "error" | "unavailable";
@@ -91,9 +92,16 @@ export function ActivityStreamClient({ runId, initialEvents, initialSource, urlT
     esRef.current?.close();
     setConnState((prev) => (prev === "open" ? "reconnecting" : "connecting"));
 
-    const url = `/api/crawls/${encodeURIComponent(runId)}/events?fromSeq=${lastSeqRef.current}`;
-    const es = new EventSource(url);
-    esRef.current = es;
+    void (async () => {
+      if (cancelledRef.current) return;
+      // EventSource can't set an Authorization header, so pass the Supabase token as a query param —
+      // the /events route is mounted public and verifies ?access_token=. API_BASE keeps it on the
+      // same origin the rest of the app talks to.
+      const token = await getAccessToken();
+      const params = new URLSearchParams({ fromSeq: String(lastSeqRef.current) });
+      if (token) params.set("access_token", token);
+      const es = new EventSource(`${API_BASE}/api/crawls/${encodeURIComponent(runId)}/events?${params.toString()}`);
+      esRef.current = es;
 
     const handle = (e: MessageEvent) => {
       let evt: ActivityEvent;
@@ -152,6 +160,7 @@ export function ActivityStreamClient({ runId, initialEvents, initialSource, urlT
         if (!cancelledRef.current) connectRef.current();
       }, delay);
     };
+    })();
   }, [runId]);
 
   useEffect(() => {

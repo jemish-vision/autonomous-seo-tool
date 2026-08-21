@@ -26,6 +26,16 @@ async function authHeader(): Promise<Record<string, string>> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+/** The current Supabase access token, or null. Used where a header can't be set — e.g. an
+ *  `EventSource` SSE stream, which authenticates via a `?access_token=` query param instead. */
+export async function getAccessToken(): Promise<string | null> {
+  const { data } = await supabase.auth.getSession();
+  return data.session?.access_token ?? null;
+}
+
+/** Same base every hook prepends (blank in dev → Vite proxies /api). Exported for EventSource URLs. */
+export const API_BASE = BASE;
+
 export async function apiGet<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     headers: { ...(await authHeader()) },

@@ -87,9 +87,10 @@ to Supabase (`healthScore 72.7`, pages + 15 findings), and `DELETE` removed it c
   `reportReady`, `exitCode`, `log`, `note`) so the New-Crawl page's poll loop terminates.
 - [x] **Cancel** (process-tree kill: `taskkill /T /F` win / `kill -pid` posix), **rerun**, **reanalyze**,
   **progress** (page-file counters), **queue** (RUNNING rows surface automatically).
-- [x] **Live events** — `GET /:runId/events` SSE tails `events.ndjson`. Works with a bearer/`AUTH_REQUIRED=false`;
-  in-browser `EventSource` can't send a bearer, so live activity needs a token-in-query or public-mount tweak
-  (progress polling is the primary, fully-working mechanism). ← only open sub-item.
+- [x] **Live events** — `GET /:runId/events` SSE tails `events.ndjson`. **In-browser streaming now works**:
+  the route is mounted PUBLIC and authenticates via `?access_token=<jwt>` (EventSource can't send a bearer
+  header); the client appends the Supabase token to the EventSource URL. Verified: 200 stream with token,
+  401 without.
 - [x] Config: `CRAWLER_PROJECT_DIR`, `CRAWLER_STORAGE_DIR`, `CRAWL_EXECUTION_ENABLED` (env, all optional).
 - [deferred] **GSC `crawl-reason`** (queue crawler for excluded URLs) — still an honest 501.
 

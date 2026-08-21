@@ -24,6 +24,7 @@ import type { Request, Response } from "express";
 import { asyncHandler } from "../../middleware/error.js";
 import { isSafeId } from "../../lib/apiShared.js";
 import { env } from "../../config/env.js";
+import { verifyUserJwt } from "../../supabase/service.js";
 import {
   startCrawl,
   cancelCrawl,
@@ -177,7 +178,7 @@ crawlRunRouter.get(
 // ── GET /:runId/events — SSE ─────────────────────────────────────────────────────────────────
 const TERMINAL_KINDS = new Set(["crawl-finished", "crawl-cancelled"]);
 
-crawlRunRouter.get("/:runId/events", (req: Request, res: Response) => {
+function eventsHandler(req: Request, res: Response): void {
   const { runId } = req.params;
   if (!isSafeId(runId)) {
     res.status(422).json({ error: "Invalid runId" });
@@ -280,6 +281,36 @@ crawlRunRouter.get("/:runId/events", (req: Request, res: Response) => {
       console.error(`[crawlRun/events/${runId}] initial drain error`, err);
     }
   })();
-});
+}
+
+/**
+ * PUBLIC events router — a browser `EventSource` cannot send an `Authorization: Bearer` header, so
+ * this route authenticates via a `?access_token=<supabase jwt>` query param instead and is mounted
+ * BEFORE requireAuth (like the GSC callback + tunnel plugin routes). Everything else stays behind the
+ * bearer gate. When AUTH_REQUIRED=false (local dev) the token check is skipped.
+ */
+export const crawlEventsPublicRouter = Router();
+crawlEventsPublicRouter.get(
+  "/:runId/events",
+  asyncHandler(async (req: Request, res: Response) => {
+    if (env.authRequired) {
+      const token = typeof req.query.access_token === "string" ? req.query.access_token : null;
+      if (!token) {
+        res.status(401).json({ error: "Unauthorized", reason: "missing access_token" });
+        return;
+      }
+      const result = await verifyUserJwt(token);
+      if (!result.configured) {
+        res.status(500).json({ error: "Auth not configured", reason: result.reason });
+        return;
+      }
+      if (!result.valid) {
+        res.status(401).json({ error: "Unauthorized", reason: result.reason ?? "invalid token" });
+        return;
+      }
+    }
+    eventsHandler(req, res);
+  }),
+);
 
 export { getCrawlStatus };

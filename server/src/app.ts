@@ -37,7 +37,7 @@ import { queueRouter } from "./modules/queue/queue.routes.js";
 import { aiRecommendationsRouter } from "./modules/aiRecommendations/aiRecommendations.routes.js";
 import { aiRecommendationsGenerateRouter } from "./modules/aiRecommendations/aiRecommendationsGenerate.routes.js";
 import { mutesRouter } from "./modules/mutes/mutes.routes.js";
-import { crawlRunRouter } from "./modules/crawlRun/crawlRun.routes.js";
+import { crawlRunRouter, crawlEventsPublicRouter } from "./modules/crawlRun/crawlRun.routes.js";
 import { automationRouter } from "./modules/automation/automation.routes.js";
 import { fixPlanRouter } from "./modules/fixPlan/fixPlan.routes.js";
 import { appliedFixesRouter } from "./modules/appliedFixes/appliedFixes.routes.js";
@@ -59,6 +59,7 @@ export function createApp(): express.Express {
   app.use("/api", healthRouter);
   app.use("/api/gsc", gscPublicRouter); // PUBLIC — Google's OAuth callback (no JWT); must be before requireAuth
   app.use("/api/tunnel", tunnelPublicRouter); // PUBLIC — WP plugin verify/heartbeat/result (token in body, no JWT); must be before requireAuth
+  app.use("/api/crawls", crawlEventsPublicRouter); // PUBLIC — SSE crawl events; EventSource can't send a bearer, so it auths via ?access_token= (must be before requireAuth)
 
   // --- default-deny gate ---
   app.use("/api", requireAuth);

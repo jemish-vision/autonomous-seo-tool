@@ -9,11 +9,13 @@ import type { SourceConfig, SourceStatus, SourceCapabilities } from "@/lib/types
 const KIND_ICONS: Record<string, string> = {
   wordpress: "🔷",
   shopify: "🟢",
+  cloudarcade: "🎮",
 };
 
 const KIND_LABELS: Record<string, string> = {
   wordpress: "WordPress",
   shopify: "Shopify",
+  cloudarcade: "ATM Games",
 };
 
 interface Meta {
@@ -26,16 +28,18 @@ interface Props {
   meta: Record<string, Meta>;
   onConnect: (id: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  onActivate: (id: string) => Promise<void>;
 }
 
-/** Connected sources as a compact table (Source · Platform · Site · Status · Actions). */
-export function SourceTable({ sources, meta, onConnect, onDelete }: Props) {
+/** Connected sources as a compact table (Active · Source · Platform · Site · Status · Actions). */
+export function SourceTable({ sources, meta, onConnect, onDelete, onActivate }: Props) {
   return (
     <Card className="overflow-hidden p-0">
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border text-left text-[11px] font-medium uppercase tracking-wider text-faint">
+              <th className="px-4 py-2.5 font-medium">Active</th>
               <th className="px-4 py-2.5 font-medium">Source</th>
               <th className="px-4 py-2.5 font-medium">Platform</th>
               <th className="px-4 py-2.5 font-medium">Site</th>
@@ -51,6 +55,7 @@ export function SourceTable({ sources, meta, onConnect, onDelete }: Props) {
                 status={meta[source.id]?.status ?? null}
                 onConnect={onConnect}
                 onDelete={onDelete}
+                onActivate={onActivate}
               />
             ))}
           </tbody>
@@ -65,14 +70,17 @@ function SourceRow({
   status,
   onConnect,
   onDelete,
+  onActivate,
 }: {
   source: SourceConfig;
   status: SourceStatus | null;
   onConnect: (id: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  onActivate: (id: string) => Promise<void>;
 }) {
   const [connecting, setConnecting] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [activating, setActivating] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   const stateColor = status?.state === "connected" ? "ok" : status?.state === "error" ? "danger" : "neutral";
@@ -106,10 +114,36 @@ function SourceRow({
     }
   };
 
+  const handleActivate = async () => {
+    if (source.active || activating) return;
+    setActivating(true);
+    try {
+      await onActivate(source.id);
+    } finally {
+      setActivating(false);
+    }
+  };
+
   const host = source.siteUrl.replace(/^https?:\/\//, "");
 
   return (
     <tr className="border-b border-border/60 last:border-0 hover:bg-subtle/40">
+      {/* Active */}
+      <td className="px-4 py-3">
+        <div className="flex items-center gap-2">
+          <input
+            type="radio"
+            name="active-source"
+            checked={Boolean(source.active)}
+            onChange={handleActivate}
+            disabled={activating}
+            aria-label={`Set ${source.name} as the active connection`}
+            className="h-4 w-4 cursor-pointer accent-primary disabled:cursor-not-allowed"
+          />
+          {source.active && <Badge tone="ok">Active</Badge>}
+        </div>
+      </td>
+
       {/* Source */}
       <td className="px-4 py-3">
         <div className="flex items-center gap-2.5">

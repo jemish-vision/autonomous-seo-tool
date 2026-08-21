@@ -130,37 +130,26 @@ export function AiRecommendationCard({ recommendation }: { recommendation: AiRec
     // image-alt fix resolves to the attachment behind the image URL, not the page.
     const writeUrl = plan.targetUrl ?? r.url;
 
-    // Phase 1: Resolve which source owns this URL. apiSend attaches the Supabase Bearer token —
-    // a raw fetch would 401 (the API authenticates by the Authorization header, not the cookie).
+    // Phase 1: Fix & Apply always targets the user's ACTIVE connection (chosen on the Sources page),
+    // not a URL-origin match. apiGet attaches the Supabase Bearer token — a raw fetch would 401.
     setFixState({ phase: "resolving" });
     try {
-      const resolveData = await apiSend<{
-        resolved?: boolean;
-        source?: { id: string; name: string };
-        connection?: { state?: string };
-      }>("POST", "/api/sources/resolve", { url: r.url });
+      const { active } = await apiGet<{
+        active: { id: string; name: string; siteUrl: string; kind: string } | null;
+      }>("/api/sources/active");
 
-      if (!resolveData.resolved || !resolveData.source) {
+      if (!active) {
         setFixState({ phase: "needs-connect", sourceName: "", sourceId: "" });
         return;
       }
 
-      // Phase 2: Check if connected
-      if (resolveData.connection?.state !== "connected") {
-        setFixState({
-          phase: "needs-connect",
-          sourceName: resolveData.source.name,
-          sourceId: resolveData.source.id,
-        });
-        return;
-      }
-
-      // Phase 3: Write the SEO change via the dashboard route. Direct connections proxy to the
-      // WordPress REST API; tunnel connections queue a command the plugin applies on its next poll.
+      // Phase 2: Write the SEO change via the dashboard route on the active connection. WordPress
+      // direct connections proxy the REST API; tunnel connections queue a command the plugin applies
+      // on its next poll; cloudarcade writes MySQL directly and returns a synchronous receipt.
       setFixState({ phase: "writing" });
       const result = await apiSend<Record<string, unknown>>(
         "POST",
-        `/api/sources/${encodeURIComponent(resolveData.source.id)}/seo`,
+        `/api/sources/${encodeURIComponent(active.id)}/seo`,
         { url: writeUrl, changes: plan.changes, kind: plan.kind },
       );
 
@@ -194,7 +183,7 @@ export function AiRecommendationCard({ recommendation }: { recommendation: AiRec
         instanceKey: r.instanceKey,
         url: writeUrl,
         changes: plan.changes,
-        sourceId: resolveData.source.id,
+        sourceId: active.id,
         queued: Boolean(result.queued),
         commandId: typeof result.commandId === "string" ? result.commandId : null,
       });
