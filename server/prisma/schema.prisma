@@ -1,0 +1,1808 @@
+// =============================================================================
+// Combined SEO Crawler Platform — data model
+// Postgres 16 (Supabase) · Prisma 6.x  (see PLAN-02 §0.2 — 7.x moves the URLs out of here)
+// Extracted verbatim from D:\projects\seo-team-audit\PLAN-02-Data-Model.md §3
+// Validated there: prisma@6.19.3 validate + migrate diff --from-empty
+// =============================================================================
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+  // Generated into packages/db/generated/client so callers outside this package (the crawler's
+  // dynamic-import adapter) resolve @prisma/client's runtime via THIS package's node_modules,
+  // without needing an npm dependency or workspace link of their own.
+  output          = "../src/db/generated/client"
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  directUrl  = env("DIRECT_URL")
+  extensions = [pg_trgm(schema: "extensions"), pgcrypto(schema: "extensions")]
+}
+
+// -----------------------------------------------------------------------------
+// Enums
+// -----------------------------------------------------------------------------
+
+enum MemberRole {
+  OWNER  @map("owner")
+  ADMIN  @map("admin")
+  EDITOR @map("editor")
+  VIEWER @map("viewer")
+}
+
+enum SiteRole {
+  PRIMARY    @map("primary")
+  COMPETITOR @map("competitor")
+}
+
+enum CrawlStatus {
+  PENDING   @map("pending")
+  RUNNING   @map("running")
+  COMPLETED @map("completed")
+  FAILED    @map("failed")
+  CANCELLED @map("cancelled")
+  PARTIAL   @map("partial")
+}
+
+enum JobState {
+  QUEUED    @map("queued")
+  RUNNING   @map("running")
+  DONE      @map("done")
+  FAILED    @map("failed")
+  CANCELLED @map("cancelled")
+}
+
+enum RenderMode {
+  AUTO   @map("auto")
+  HTTP   @map("http")
+  ALWAYS @map("always")
+}
+
+enum RenderedWith {
+  HTTP    @map("http")
+  BROWSER @map("browser")
+}
+
+enum ContentSource {
+  MAIN              @map("main")
+  ROLE_MAIN         @map("role-main")
+  ARTICLE           @map("article")
+  BODY_MINUS_CHROME @map("body-minus-chrome")
+  BODY              @map("body")
+  RENDERED_DOM      @map("rendered-dom")
+  NONE              @map("none")
+}
+
+enum LinkKind {
+  ANCHOR         @map("anchor")
+  AREA           @map("area")
+  IFRAME         @map("iframe")
+  FRAME          @map("frame")
+  LINK_NEXT      @map("link:next")
+  LINK_PREV      @map("link:prev")
+  LINK_FEED      @map("link:feed")
+  LINK_HREFLANG  @map("link:hreflang")
+  LINK_CANONICAL @map("link:canonical")
+  DATA_ATTRIBUTE @map("data-attribute")
+  INLINE_SCRIPT  @map("inline-script")
+  FORM_GET       @map("form-get")
+  META_REFRESH   @map("meta-refresh")
+}
+
+enum LinkScope {
+  INTERNAL @map("internal")
+  EXTERNAL @map("external")
+}
+
+enum ImageSource {
+  IMG            @map("img")
+  SRCSET         @map("srcset")
+  PICTURE        @map("picture")
+  LAZY_ATTRIBUTE @map("lazy-attribute")
+  CSS_BACKGROUND @map("css-background")
+  CSS_STYLESHEET @map("css-stylesheet")
+  SVG_USE        @map("svg-use")
+  POSTER         @map("poster")
+  META           @map("meta")
+  ICON           @map("icon")
+  NETWORK        @map("network")
+}
+
+enum AltState {
+  MISSING     @map("missing")     // attribute absent — a defect
+  EMPTY       @map("empty")       // alt="" — decorative, usually intentional
+  DESCRIBED   @map("described")
+  NOT_CHECKED @map("not-checked") // css-only / decorative source, excluded from the denominator
+}
+
+enum MediaKind {
+  VIDEO   @map("video")
+  AUDIO   @map("audio")
+  EMBED   @map("embed")
+  OBJECT  @map("object")
+  IFRAME  @map("iframe")
+  YOUTUBE @map("youtube")
+  VIMEO   @map("vimeo")
+  FILE    @map("file")
+}
+
+enum StructuredDataFormat {
+  JSON_LD   @map("json-ld")
+  MICRODATA @map("microdata")
+  RDFA      @map("rdfa")
+}
+
+enum RuleScope {
+  PAGE @map("page")
+  SITE @map("site")
+}
+
+enum Severity {
+  CRITICAL @map("critical")
+  ERROR    @map("error")
+  WARNING  @map("warning")
+  NOTICE   @map("notice")
+}
+
+enum DetectionTier {
+  OBSERVED  @map("observed")  // confidence 1.0
+  DERIVED   @map("derived")   // confidence 0.9
+  HEURISTIC @map("heuristic") // confidence 0.7
+}
+
+enum AutomationClass {
+  AUTO_SAFE        @map("auto-safe")
+  AUTO_WITH_REVIEW @map("auto-with-review")
+  HUMAN_ONLY       @map("human-only")
+}
+
+enum EffortLevel {
+  LOW    @map("low")
+  MEDIUM @map("medium")
+  HIGH   @map("high")
+}
+
+enum FindingStatus {
+  FAILING                  @map("failing")
+  PASSED                   @map("passed")
+  SKIPPED_DATA_UNAVAILABLE @map("skipped-data-unavailable")
+  ERRORED                  @map("errored")
+  MUTED                    @map("muted")
+}
+
+enum FailureClass {
+  TIMEOUT       @map("timeout")
+  DNS           @map("dns")
+  HTTP_4XX      @map("http-4xx")
+  HTTP_5XX      @map("http-5xx")
+  REDIRECT_LOOP @map("redirect-loop")
+  PARSE_ERROR   @map("parse-error")
+  TLS           @map("tls")
+  CONN_REFUSED  @map("conn-refused")
+  CONN_RESET    @map("conn-reset")
+  RATE_LIMITED  @map("rate-limited")
+  NON_HTML      @map("non-html")
+  OTHER         @map("other")
+}
+
+enum BlockedReason {
+  ROBOTS              @map("robots")
+  SAFETY_LOGOUT       @map("safety-logout")
+  SAFETY_DESTRUCTIVE  @map("safety-destructive")
+  USER_EXCLUDED       @map("user-excluded")
+  OUT_OF_SCOPE        @map("out-of-scope")
+  URL_TOO_LONG        @map("url-too-long")
+  TOO_MANY_PARAMS     @map("too-many-params")
+  ASSET_EXTENSION     @map("asset-extension")
+  DEPTH_BUDGET        @map("depth-budget")
+  PAGE_BUDGET         @map("page-budget")
+}
+
+enum SiteFileKind {
+  ROBOTS_TXT     @map("robots.txt")
+  SITEMAP_XML    @map("sitemap.xml")
+  SITEMAP_INDEX  @map("sitemap-index")
+  LLMS_TXT       @map("llms.txt")
+  MANIFEST_JSON  @map("manifest.json")
+  SECURITY_TXT   @map("security.txt")
+  ADS_TXT        @map("ads.txt")
+  FEED           @map("feed")
+}
+
+enum FileParseStatus {
+  LOADED       @map("loaded")
+  EMPTY        @map("empty")
+  SOFT_404     @map("soft-404")
+  NOT_FOUND    @map("not-found")
+  SERVER_ERROR @map("server-error")
+  UNREACHABLE  @map("unreachable")
+  MALFORMED    @map("malformed")
+  GZIP_UNREAD  @map("gzip-unreadable")
+  NONE         @map("none")
+}
+
+enum AiAccessVerdict {
+  ALLOWED        @map("allowed")
+  BLOCKED        @map("blocked")
+  PARTLY_BLOCKED @map("partly-blocked")
+  IGNORES_ROBOTS @map("ignores-robots")
+  UNKNOWN        @map("unknown")
+}
+
+enum DuplicateKind {
+  EXACT_CONTENT @map("exact-content")
+  NEAR_CONTENT  @map("near-content")
+  TITLE         @map("title")
+  DESCRIPTION   @map("description")
+  URL_VARIANT   @map("url-variant")
+}
+
+enum ComparisonKind {
+  HISTORICAL @map("historical") // this site, previous run
+  COMPETITOR @map("competitor") // our site vs a competitor site
+  BASELINE   @map("baseline")   // against a pinned baseline run
+}
+
+enum DiffChangeKind {
+  PAGE_ADDED        @map("page-added")
+  PAGE_REMOVED      @map("page-removed")
+  PAGE_CHANGED      @map("page-changed")
+  ISSUE_NEW         @map("issue-new")
+  ISSUE_FIXED       @map("issue-fixed")
+  ISSUE_PERSISTING  @map("issue-persisting")
+  ISSUE_CHURNED     @map("issue-churned")
+  MEASUREMENT_DELTA @map("measurement-delta")
+}
+
+enum ArtifactKind {
+  RAW_HTML         @map("raw-html")
+  STATIC_HTML      @map("static-html")   // pre-render snapshot, escalated pages only
+  RENDERED_HTML    @map("rendered-html")
+  SCREENSHOT_FULL  @map("screenshot-full")
+  SCREENSHOT_THUMB @map("screenshot-thumb")
+  SITE_FILE        @map("site-file")
+  CRAWL_LOG        @map("crawl-log")
+  EXPORT_CSV       @map("export-csv")
+  EXPORT_NDJSON    @map("export-ndjson")
+  REPORT_HTML      @map("report-html")
+  HAR              @map("har")
+}
+
+enum ActivityLevel {
+  DEBUG   @map("debug")
+  INFO    @map("info")
+  SUCCESS @map("success")
+  WARN    @map("warn")
+  ERROR   @map("error")
+}
+
+enum ActivityKind {
+  LIFECYCLE @map("lifecycle")
+  REQUEST   @map("request")
+  RENDER    @map("render")
+  RETRY     @map("retry")
+  DISCOVERY @map("discovery")
+  BLOCKED   @map("blocked")
+  FAILURE   @map("failure")
+  ANALYSIS  @map("analysis")
+  PROGRESS  @map("progress")
+}
+
+enum MeasurementUnit {
+  COUNT       @map("count")
+  PERCENT     @map("percent")
+  MILLISECOND @map("ms")
+  BYTE        @map("byte")
+  SCORE       @map("score")
+  RATIO       @map("ratio")
+  TEXT        @map("text")
+}
+
+enum TrendDirection {
+  UP_IS_GOOD   @map("up-is-good")
+  DOWN_IS_GOOD @map("down-is-good")
+  NEUTRAL      @map("neutral")
+}
+
+// -----------------------------------------------------------------------------
+// Tenancy & auth
+// -----------------------------------------------------------------------------
+
+/// Mirrors auth.users. Row created by an AFTER INSERT trigger on auth.users
+/// (Appendix A.1) because Prisma cannot model the auth schema without multiSchema.
+model User {
+  id          String   @id @db.Uuid
+  email       String   @unique @db.VarChar(320)
+  displayName String?  @db.VarChar(200)
+  avatarUrl   String?  @db.Text
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(6)
+
+  ownedProjects Project[]        @relation("ProjectOwner")
+  memberships   ProjectMember[]
+  ruleMutes     RuleMute[]
+  crawlJobs     CrawlJob[]
+
+  @@map("users")
+}
+
+model Project {
+  id        String    @id @default(uuid()) @db.Uuid
+  ownerId   String    @db.Uuid
+  name      String    @db.VarChar(200)
+  slug      String    @db.VarChar(120)
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  owner   User            @relation("ProjectOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  members ProjectMember[]
+  sites   Site[]
+  crawls  Crawl[]
+  jobs    CrawlJob[]
+  rules   Rule[]
+  comparisons RunComparison[]
+
+  @@unique([ownerId, slug])
+  @@index([ownerId])
+  @@index([deletedAt])
+  @@map("projects")
+}
+
+model ProjectMember {
+  projectId String     @db.Uuid
+  userId    String     @db.Uuid
+  role      MemberRole @default(VIEWER)
+  createdAt DateTime   @default(now()) @db.Timestamptz(6)
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, userId])
+  @@index([userId])
+  @@map("project_members")
+}
+
+// -----------------------------------------------------------------------------
+// Sites & scheduling
+// -----------------------------------------------------------------------------
+
+model Site {
+  id              String    @id @default(uuid()) @db.Uuid
+  projectId       String    @db.Uuid
+  role            SiteRole  @default(PRIMARY)
+  label           String    @db.VarChar(200)
+  startUrl        String    @db.Text
+  host            String    @db.VarChar(255)
+  /// Extra hostnames treated as this site (staging domains, www variants).
+  aliases         String[]
+  /// Default crawl settings applied when a job does not override them.
+  defaultSettings Json?     @db.JsonB
+  createdAt       DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt       DateTime? @db.Timestamptz(6)
+
+  project   Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  crawls    Crawl[]
+  jobs      CrawlJob[]
+  schedules CrawlSchedule[]
+  mutes     RuleMute[]
+
+  @@unique([projectId, host, role])
+  @@index([projectId, role])
+  @@index([host])
+  @@map("sites")
+}
+
+model CrawlSchedule {
+  id         String    @id @default(uuid()) @db.Uuid
+  projectId  String    @db.Uuid
+  siteId     String    @db.Uuid
+  cron       String    @db.VarChar(120)
+  timezone   String    @default("UTC") @db.VarChar(64)
+  enabled    Boolean   @default(true)
+  settings   Json?     @db.JsonB
+  lastRunAt  DateTime? @db.Timestamptz(6)
+  nextRunAt  DateTime? @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime  @updatedAt @db.Timestamptz(6)
+
+  site Site       @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  jobs CrawlJob[]
+
+  @@index([enabled, nextRunAt])
+  @@index([projectId])
+  @@map("crawl_schedules")
+}
+
+// -----------------------------------------------------------------------------
+// Queue
+// -----------------------------------------------------------------------------
+
+/// Durable job queue. Replaces Kishan's in-process FIFO CrawlQueue and the
+/// single-boolean locks the other three used. Claimed with
+/// SELECT ... FOR UPDATE SKIP LOCKED so N workers can share it safely.
+model CrawlJob {
+  id              String    @id @default(uuid()) @db.Uuid
+  projectId       String    @db.Uuid
+  siteId          String    @db.Uuid
+  scheduleId      String?   @db.Uuid
+  requestedById   String?   @db.Uuid
+
+  state           JobState  @default(QUEUED)
+  /// Higher runs first. 0 = normal, 100 = interactive/user-initiated.
+  priority        Int       @default(0) @db.SmallInt
+
+  // --- settings snapshot (the exact config this job will run with) ---
+  startUrl        String    @db.Text
+  maxPages        Int?
+  maxDepth        Int?      @db.SmallInt
+  renderMode      RenderMode @default(AUTO)
+  respectRobots   Boolean   @default(true)
+  concurrency     Int       @default(4) @db.SmallInt
+  requestsPerSec  Float     @default(2)
+  followFeeds     Boolean   @default(true)
+  checkExternal   Boolean   @default(false)
+  captureRawHtml  Boolean   @default(true)
+  captureScreens  Boolean   @default(false)
+  excludePatterns String[]
+  /// Auth method NAME only. Credentials never touch this table.
+  authMethod      String?   @db.VarChar(40)
+  settings        Json?     @db.JsonB
+
+  // --- lifecycle ---
+  queuedAt        DateTime  @default(now()) @db.Timestamptz(6)
+  startedAt       DateTime? @db.Timestamptz(6)
+  finishedAt      DateTime? @db.Timestamptz(6)
+  heartbeatAt     DateTime? @db.Timestamptz(6)
+  workerId        String?   @db.VarChar(120)
+  attempts        Int       @default(0) @db.SmallInt
+  maxAttempts     Int       @default(3) @db.SmallInt
+  cancelRequested Boolean   @default(false)
+  lastError       String?   @db.Text
+
+  crawlId         String?   @unique @db.Uuid
+
+  site        Site           @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  project     Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  schedule    CrawlSchedule? @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+  requestedBy User?          @relation(fields: [requestedById], references: [id], onDelete: SetNull)
+  crawl       Crawl?         @relation(fields: [crawlId], references: [id], onDelete: SetNull)
+
+  @@index([state, priority(sort: Desc), queuedAt])
+  @@index([projectId, queuedAt(sort: Desc)])
+  @@index([siteId, state])
+  @@index([state, heartbeatAt])
+  @@map("crawl_jobs")
+}
+
+// -----------------------------------------------------------------------------
+// Crawl (run)
+// -----------------------------------------------------------------------------
+
+model Crawl {
+  id                String      @id @default(uuid()) @db.Uuid
+  projectId         String      @db.Uuid
+  siteId            String      @db.Uuid
+  /// Human-facing run id, e.g. "visioninfotech.net-20260813-164500".
+  slug              String      @db.VarChar(160)
+  label             String?     @db.VarChar(200)
+  startUrl          String      @db.Text
+
+  status            CrawlStatus @default(PENDING)
+  startedAt         DateTime?   @db.Timestamptz(6)
+  finishedAt        DateTime?   @db.Timestamptz(6)
+  durationMs        Int?
+  terminationReason String?     @db.VarChar(60) // completed | page-limit | depth-limit | time-limit | cancelled | error
+
+  // --- config snapshot: what this run was actually told to do ---
+  config            Json        @db.JsonB
+  /// Stable hash of `config` — two runs with the same hash are directly comparable.
+  configHash        String      @db.Char(64)
+  extractorVersion  String      @db.VarChar(40)
+  rulebookVersion   String?     @db.VarChar(40)
+  crawlerUserAgent  String?     @db.Text
+  /// Field names this extractor version was capable of producing. Powers the
+  /// "not captured in this run" three-state contract (P5).
+  capturedFields    String[]
+
+  // --- materialised totals: every /runs and overview column, written at close ---
+  pagesCrawled      Int         @default(0)
+  pagesDiscovered   Int         @default(0)
+  pagesFailed       Int         @default(0)
+  pagesBlocked      Int         @default(0)
+  pagesSkipped      Int         @default(0)
+  pagesRendered     Int         @default(0)
+  requestsMade      Int         @default(0)
+  maxDepthSeen      Int         @default(0) @db.SmallInt
+  coveragePercent   Float?
+  totalBytes        BigInt      @default(0)
+  avgResponseTimeMs Int?
+  avgWordCount      Int?
+  peakHeapMb        Int?
+
+  healthScore       Float?
+  healthGrade       String?     @db.VarChar(20)
+  healthPenalty     Float?
+  criticalCount     Int         @default(0)
+  errorCount        Int         @default(0)
+  warningCount      Int         @default(0)
+  noticeCount       Int         @default(0)
+  cleanPageCount    Int         @default(0)
+
+  /// {"2xx":940,"3xx":12,"4xx":8,"5xx":1,"failed":3,"blocked":6}
+  statusHistogram   Json?       @db.JsonB
+  /// {"0":1,"1":24,"2":210,...}
+  depthHistogram    Json?       @db.JsonB
+  /// {"timeout":4,"dns":1,"http-4xx":8}
+  failuresByClass   Json?       @db.JsonB
+  /// Pre-counted results for every pages-explorer filter chip. Written once at
+  /// close so the explorer never runs 24 COUNT(*) queries per request (§4.2).
+  filterCounts      Json?       @db.JsonB
+  /// Free-form crawl notes: what could not be checked, render warnings, caps hit.
+  notes             Json?       @db.JsonB
+
+  /// Soft pointer to the previous completed crawl of this site. Not a FK:
+  /// pruning an old crawl must not cascade into the current one (P7).
+  previousCrawlId   String?     @db.Uuid
+  isBaseline        Boolean     @default(false)
+
+  /// Set the first (and every) time AI exact-fix recommendations are generated for this run — see
+  /// aiRecommendationsGenerate.routes.ts. Distinguishes "generation ran but produced zero
+  /// recommendations" (this is non-null, aiRecommendations is empty) from "never generated" (null).
+  /// The read route (aiRecommendations.routes.ts) uses it to set the response's `generated` flag.
+  aiRecsGeneratedAt DateTime?   @db.Timestamptz(6)
+
+  createdAt         DateTime    @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime    @updatedAt @db.Timestamptz(6)
+  deletedAt         DateTime?   @db.Timestamptz(6)
+
+  project           Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  site              Site                @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  job               CrawlJob?
+  pages             Page[]
+  links             PageLink[]
+  images            PageImage[]
+  media             PageMedia[]
+  headings          PageHeading[]
+  structuredData    StructuredDataItem[]
+  redirectHops      PageRedirectHop[]
+  linkTargets       LinkTarget[]
+  imageAssets       ImageAsset[]
+  findings          Finding[]
+  issues            Issue[]
+  measurements      Measurement[]
+  activity          ActivityLogEntry[]
+  siteFiles         SiteFile[]
+  sitemapFiles      SitemapFile[]
+  sitemapEntries    SitemapEntry[]
+  failures          Failure[]
+  blockedUrls       BlockedUrl[]
+  duplicateGroups   DuplicateGroup[]
+  artifacts         Artifact[]
+  comparisonsAsBase RunComparison[]     @relation("ComparisonBase")
+  comparisonsAsHead RunComparison[]     @relation("ComparisonHead")
+
+  aiRecommendations AiRecommendation[]
+  @@unique([siteId, slug])
+  @@index([siteId, startedAt(sort: Desc)])
+  @@index([projectId, startedAt(sort: Desc)])
+  @@index([status, startedAt(sort: Desc)])
+  @@index([siteId, status, finishedAt(sort: Desc)])
+  @@index([configHash])
+  @@map("crawls")
+}
+
+// -----------------------------------------------------------------------------
+// Page — the wide record
+// -----------------------------------------------------------------------------
+
+model Page {
+  id             String   @id @default(uuid()) @db.Uuid
+  crawlId        String   @db.Uuid
+  projectId      String   @db.Uuid // denormalised for RLS (P6)
+
+  // --- identity ---
+  /// First 12 hex chars of sha256(normalizedUrl). Stable across runs, so a page
+  /// can be followed run-to-run without a URL join. Matches the POC's pageId.
+  pageKey        String   @db.Char(12)
+  url            String   @db.Text
+  normalizedUrl  String   @db.Text
+  finalUrl       String?  @db.Text
+  urlPath        String   @db.Text
+  host           String   @db.VarChar(255)
+  /// First path segment — powers the "Group by section" toggle.
+  section        String?  @db.VarChar(200)
+  urlLength      Int      @db.SmallInt
+
+  // --- HTTP ---
+  statusCode     Int?     @db.SmallInt
+  contentType    String?  @db.VarChar(160)
+  httpVersion    String?  @db.VarChar(12)
+  contentEncoding String? @db.VarChar(40)
+  depth          Int      @default(0) @db.SmallInt
+  fetchedAt      DateTime @db.Timestamptz(6)
+  responseTimeMs Int?
+  ttfbMs         Int?
+  downloadMs     Int?
+  htmlBytes      Int?
+  renderedBytes  Int?
+  retryCount     Int      @default(0) @db.SmallInt
+  parentUrl      String?  @db.Text
+  discoverySources String[]
+
+  // --- redirects ---
+  redirectHops      Int     @default(0) @db.SmallInt
+  redirectTargetUrl String? @db.Text
+  crossHostRedirect Boolean @default(false)
+  toHttps           Boolean @default(false)
+  redirectLoop      Boolean @default(false)
+  permanentRedirect Boolean @default(false)
+
+  // --- indexability ---
+  canonical         String?  @db.Text
+  canonicalIsSelf   Boolean?
+  noindex           Boolean  @default(false)
+  nofollow          Boolean  @default(false)
+  indexable         Boolean  @default(true)
+  robotsDisallowed  Boolean  @default(false)
+  inSitemap         Boolean  @default(false)
+  robotsDirectives  String[]
+
+  // --- title / meta ---
+  title                  String? @db.Text
+  titleLength            Int?    @db.SmallInt
+  titlePx                Int?    @db.SmallInt
+  /// Char index where a 600px SERP result truncates; -1 = fits. Jemish's SERP facsimile.
+  titleCutIndex          Int?    @db.SmallInt
+  titleCount             Int     @default(0) @db.SmallInt
+  metaDescription        String? @db.Text
+  metaDescriptionLength  Int?    @db.SmallInt
+  metaDescriptionPx      Int?    @db.SmallInt
+  metaDescriptionCount   Int     @default(0) @db.SmallInt
+  metaKeywords           String? @db.Text
+  metaTagCount           Int     @default(0) @db.SmallInt
+  ogTagCount             Int     @default(0) @db.SmallInt
+  twitterTagCount        Int     @default(0) @db.SmallInt
+  hasOpenGraph           Boolean @default(false)
+  hasTwitterCard         Boolean @default(false)
+  charset                String? @db.VarChar(40)
+  viewport               String? @db.Text
+  viewportBlocksZoom     Boolean @default(false)
+  hasMetaRefresh         Boolean @default(false)
+  lang                   String? @db.VarChar(20)
+  dir                    String? @db.VarChar(8)
+  baseHref               String? @db.Text
+
+  // --- headings ---
+  h1           String? @db.Text
+  h1Count      Int     @default(0) @db.SmallInt
+  h2Count      Int     @default(0) @db.SmallInt
+  h3Count      Int     @default(0) @db.SmallInt
+  headingCount Int     @default(0) @db.SmallInt
+
+  // --- content ---
+  wordCount         Int?
+  charCount         Int?
+  textRatio         Float?
+  readingTimeMin    Int?           @db.SmallInt
+  contentSource     ContentSource?
+  contentHash       String?        @db.Char(64)
+  /// 64-bit SimHash stored as a signed bigint. Cast on read.
+  simHash           BigInt?
+  fleschReadingEase Float?
+  isDuplicate       Boolean        @default(false)
+  duplicateGroupId  String?        @db.Uuid
+
+  // --- links ---
+  internalLinkCount       Int   @default(0)
+  externalLinkCount       Int   @default(0)
+  outlinkCount            Int   @default(0)
+  inlinkCount             Int   @default(0)
+  uniqueInlinkCount       Int   @default(0)
+  nofollowLinkCount       Int   @default(0)
+  brokenInternalLinkCount Int   @default(0)
+  brokenExternalLinkCount Int   @default(0)
+  emptyAnchorCount        Int   @default(0)
+  isOrphan                Boolean @default(false)
+  /// Internal PageRank, log-scaled 0-100. NULL until the graph pass has run.
+  internalRank            Float?
+
+  // --- images ---
+  imageCount              Int    @default(0)
+  imagesMissingAlt        Int    @default(0)
+  imagesEmptyAlt          Int    @default(0)
+  imagesMissingDimensions Int    @default(0)
+  heavyImageCount         Int    @default(0)
+  imageBytes              BigInt @default(0)
+
+  // --- structured data ---
+  jsonLdBlockCount    Int      @default(0) @db.SmallInt
+  jsonLdValid         Boolean?
+  structuredDataTypes String[]
+  microdataTypes      String[]
+  rdfaTypes           String[]
+  schemaIssueCount    Int      @default(0) @db.SmallInt
+  hreflangCount       Int      @default(0) @db.SmallInt
+
+  // --- render ---
+  renderedWith         RenderedWith @default(HTTP)
+  renderRequested      Boolean      @default(false)
+  renderFailed         Boolean      @default(false)
+  renderDiscarded      Boolean      @default(false)
+  likelyClientRendered Boolean      @default(false)
+  renderMs             Int?
+  renderFirstContentMs Int?
+  renderSignals        String[]
+  renderDivergent      Boolean      @default(false)
+  clientRedirectTo     String?      @db.Text
+
+  // --- lab vitals (browser pages only) ---
+  lcpMs                  Int?
+  clsScore               Float?
+  tbtMs                  Int?
+  fcpMs                  Int?
+  domContentLoadedMs     Int?
+  loadEventMs            Int?
+  domNodes               Int?
+  subresourceRequestCount Int?
+  subresourceBytes       BigInt?
+  renderBlockingCount    Int       @default(0) @db.SmallInt
+
+  // --- security ---
+  isHttps                    Boolean @default(true)
+  mixedContentCount          Int     @default(0) @db.SmallInt
+  missingSecurityHeaderCount Int     @default(0) @db.SmallInt
+  hasHsts                    Boolean @default(false)
+  hasCsp                     Boolean @default(false)
+  sslValid                   Boolean?
+
+  // --- verdict (materialised from Issue at analysis close) ---
+  score         Int? @db.SmallInt
+  issueCount    Int  @default(0) @db.SmallInt
+  criticalCount Int  @default(0) @db.SmallInt
+  errorCount    Int  @default(0) @db.SmallInt
+  warningCount  Int  @default(0) @db.SmallInt
+  noticeCount   Int  @default(0) @db.SmallInt
+  /// FR-2 page classification. NULL until the classifier ships.
+  pageType      String? @db.VarChar(40)
+
+  // --- evidence (JSONB — detail screen only, §2.3) ---
+  httpDetail     Json? @db.JsonB
+  metaDetail     Json? @db.JsonB
+  indexingDetail Json? @db.JsonB
+  contentDetail  Json? @db.JsonB
+  perfDetail     Json? @db.JsonB
+  securityDetail Json? @db.JsonB
+  renderDetail   Json? @db.JsonB
+  headDetail     Json? @db.JsonB
+  assetsDetail   Json? @db.JsonB
+
+  crawl          Crawl                @relation(fields: [crawlId], references: [id], onDelete: Cascade)
+  content        PageContent?
+  outlinks       PageLink[]           @relation("PageOutlinks")
+  inlinks        PageLink[]           @relation("PageInlinks")
+  images         PageImage[]
+  media          PageMedia[]
+  headings       PageHeading[]
+  structuredData StructuredDataItem[]
+  redirectChain  PageRedirectHop[]
+  issues         Issue[]              @relation("IssuePage")
+  relatedIssues  Issue[]              @relation("IssueRelatedPage")
+  artifacts      Artifact[]
+  sitemapEntries SitemapEntry[]
+  duplicateOf    DuplicateGroupMember[]
+  diffBaseOf     RunDiffEntry[]       @relation("DiffBasePage")
+  diffHeadOf     RunDiffEntry[]       @relation("DiffHeadPage")
+
+  @@unique([crawlId, pageKey])
+  @@index([crawlId, statusCode])
+  @@index([crawlId, depth])
+  @@index([crawlId, score(sort: Desc)])
+  @@index([crawlId, issueCount(sort: Desc)])
+  @@index([crawlId, wordCount])
+  @@index([crawlId, responseTimeMs(sort: Desc)])
+  @@index([crawlId, titleLength])
+  @@index([crawlId, metaDescriptionLength])
+  @@index([crawlId, imagesMissingAlt])
+  @@index([crawlId, inlinkCount])
+  @@index([crawlId, internalRank(sort: Desc)])
+  @@index([crawlId, section])
+  @@index([crawlId, renderedWith])
+  @@index([crawlId, contentHash])
+  @@index([crawlId, normalizedUrl])
+  @@index([crawlId, pageType])
+  @@index([projectId])
+  @@index([duplicateGroupId])
+  @@index([structuredDataTypes], type: Gin)
+  @@index([renderSignals], type: Gin)
+  @@map("pages")
+}
+
+/// 1:1 with Page. Split out so a forgotten `select` on the pages explorer
+/// cannot drag 12 KB of body text per row over the wire (§2.4).
+model PageContent {
+  pageId     String  @id @db.Uuid
+  crawlId    String  @db.Uuid
+  projectId  String  @db.Uuid
+  text       String  @db.Text
+  /// Opening 150 words — the drawer preview.
+  firstWords String? @db.Text
+  /// {oneWord:[{term,count,density}], twoWord:[...], totalTerms}
+  keywords   Json?   @db.JsonB
+  /// {fleschReadingEase, fleschKincaidGrade, sentences, syllables, averageWordsPerSentence, band}
+  readability Json?  @db.JsonB
+
+  page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@index([crawlId])
+  @@map("page_contents")
+}
+
+// -----------------------------------------------------------------------------
+// Per-page child tables
+// -----------------------------------------------------------------------------
+
+model PageLink {
+  id               BigInt     @id @default(autoincrement())
+  crawlId          String     @db.Uuid
+  projectId        String     @db.Uuid
+  pageId           String     @db.Uuid
+  position         Int        @db.SmallInt
+  rawHref          String?    @db.Text
+  targetUrl        String     @db.Text
+  targetNormalized String?    @db.Text
+  targetHost       String?    @db.VarChar(255)
+  anchor           String?    @db.Text
+  /// Accessible name: anchor text OR aria-label OR title OR nested img[alt] OR svg title.
+  accessibleName   String?    @db.Text
+  kind             LinkKind   @default(ANCHOR)
+  scope            LinkScope
+  rel              String?    @db.VarChar(200)
+  nofollow         Boolean    @default(false)
+  sponsored        Boolean    @default(false)
+  ugc              Boolean    @default(false)
+  targetAttr       String?    @db.VarChar(40)
+  crawlable        Boolean    @default(true)
+  /// Resolved after the crawl. NULL = target was never crawled/checked.
+  targetStatusCode Int?       @db.SmallInt
+  targetPageId     String?    @db.Uuid
+
+  crawl      Crawl @relation(fields: [crawlId], references: [id], onDelete: Cascade)
+  page       Page  @relation("PageOutlinks", fields: [pageId], references: [id], onDelete: Cascade)
+  targetPage Page? @relation("PageInlinks", fields: [targetPageId], references: [id], onDelete: SetNull)
+
+  @@index([pageId, position])
+  @@index([crawlId, targetNormalized])
+  @@index([targetPageId])
+  @@index([crawlId, scope, targetStatusCode])
+  @@index([crawlId, targetHost])
+  @@map("page_links")
+}
+
+model PageImage {
+  id            BigInt      @id @default(autoincrement())
+  crawlId       String      @db.Uuid
+  projectId     String      @db.Uuid
+  pageId        String      @db.Uuid
+  position      Int         @db.SmallInt
+  rawSrc        String?     @db.Text
+  url           String?     @db.Text
+  /// NULL = alt attribute absent. '' = present but empty. Load-bearing (P5).
+  alt           String?     @db.Text
+  altState      AltState    @default(NOT_CHECKED)
+  title         String?     @db.Text
+  declaredWidth Int?
+  declaredHeight Int?
+  naturalWidth  Int?
+  naturalHeight Int?
+  format        String?     @db.VarChar(20)
+  loading       String?     @db.VarChar(20)
+  lazy          Boolean     @default(false)
+  sizeBytes     Int?
+  sizeSource    String?     @db.VarChar(20)
+  sizeError     String?     @db.VarChar(200)
+  source        ImageSource @default(IMG)
+  cssOnly       Boolean     @default(false)
+  unresolved    Boolean     @default(false)
+  broken        Boolean     @default(false)
+  brokenReason  String?     @db.VarChar(200)
+  srcset        String?     @db.Text
+  sizesAttr     String?     @db.Text
+  /// <picture><source> alternates: [{srcset,type,media}]
+  variants      Json?       @db.JsonB
+
+  crawl Crawl @relation(fields: [crawlId], references: [id], onDelete: Cascade)
+  page  Page  @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@index([pageId, position])
+  @@index([crawlId, url])
+  @@index([crawlId, altState])
+  @@index([crawlId, sizeBytes(sort: Desc)])
+  @@map("page_images")
+}
+
+model PageMedia {
+  id         BigInt    @id @default(autoincrement())
+  crawlId    String    @db.Uuid
+  projectId  String    @db.Uuid
+  pageId     String    @db.Uuid
+  position   Int       @db.SmallInt
+  kind       MediaKind
+  url        String    @db.Text
+  poster     String?   @db.Text
+  mimeType   String?   @db.VarChar(120)
+  providerId String?   @db.VarChar(120)
+
+  crawl Crawl @relation(fields: [crawlId], references: [id], onDelete: Cascade)
+  page  Page  @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@index([pageId, position])
+  @@index([crawlId, kind])
+  @@map("page_media")
+}
+
+model PageHeading {
+  id        BigInt  @id @default(autoincrement())
+  crawlId   String  @db.Uuid
+  projectId String  @db.Uuid
+  pageId    String  @db.Uuid
+  /// 1-6. Document order across levels — a single tree walk, not six selectors.
+  level     Int     @db.SmallInt
+  text      String  @db.Text
+  position  Int     @db.SmallInt
+  /// Inside main / [role=main] / article.
+  inMain    Boolean @default(false)
+  isEmpty   Boolean @default(false)
+
+  crawl Crawl @relation(fields: [crawlId], references: [id], onDelete: Cascade)
+  page  Page  @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@index([pageId, position])
+  @@index([crawlId, level])
+  @@map("page_headings")
+}
+
+model StructuredDataItem {
+  id           BigInt               @id @default(autoincrement())
+  crawlId      String               @db.Uuid
+  projectId    String               @db.Uuid
+  pageId       String               @db.Uuid
+  position     Int                  @db.SmallInt
+  format       StructuredDataFormat
+  types        String[]
+  valid        Boolean              @default(true)
+  parseError   String?              @db.Text
+  truncated    Boolean              @default(false)
+  /// Raw block, byte-faithful, capped at 200 KB by the writer. Invalid blocks
+  /// are kept and flagged, never dropped.
+  raw          String?              @db.Text
+  parsed       Json?                @db.JsonB
+  /// {validator, errors[], warnings[], missingRequired[], missingRecommended[]}
+  validation   Json?                @db.JsonB
+
+  crawl Crawl @relation(fields: [crawlId], references: [id], onDelete: Cascade)
+  page  Page  @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@index([pageId, position])
+  @@index([crawlId, format])
+  @@index([types], type: Gin)
+  @@map("structured_data_items")
+}
+
+model PageRedirectHop {
+  id         BigInt  @id @default(autoincrement())
+  crawlId    String  @db.Uuid
+  projectId  String  @db.Uuid
+  pageId     String  @db.Uuid
+  hopIndex   Int     @db.SmallInt
+  fromUrl    String  @db.Text
+  toUrl      String? @db.Text
+  /// 0 = not observed. Never fabricated.
+  statusCode Int     @default(0) @db.SmallInt
+
+  crawl Crawl @relation(fields: [crawlId], references: [id], onDelete: Cascade)
+  page  Page  @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@unique([pageId, hopIndex])
+  @@index([crawlId])
+  @@map("page_redirect_hops")
+}
+
+// -----------------------------------------------------------------------------
+// Per-crawl aggregates (materialised at crawl close — P3)
+// -----------------------------------------------------------------------------
+
+/// One row per unique link destination in the crawl. Kishan's links.json.
+model LinkTarget {
+  id              BigInt    @id @default(autoincrement())
+  crawlId         String    @db.Uuid
+  projectId       String    @db.Uuid
+  url             String    @db.Text
+  host            String?   @db.VarChar(255)
+  scope           LinkScope
+  refCount        Int       @default(0)
+  sourcePageCount Int       @default(0)
+  statusCode      Int?      @db.SmallInt
+  crawled         Boolean   @default(false)
+  allNofollow     Boolean   @default(false)
+  /// Capped sample — first 5 distinct anchors, first 20 source pages.
+  sampleAnchors   String[]
+  sampleSources   String[]
+  kinds           String[]
+  checkedAt       DateTime? @db.Timestamptz(6)
+  checkError      String?   @db.VarChar(200)
+
+  crawl Crawl @relation(fields: [crawlId], references: [id], onDelete: Cascade)
+
+  @@unique([crawlId, url])
+  @@index([crawlId, refCount(sort: Desc)])
+  @@index([crawlId, scope, statusCode])
+  @@index([crawlId, host])
+  @@map("link_targets")
+}
+
+/// One row per unique image in the crawl. Kishan's images.json.
+model ImageAsset {
+  id               BigInt  @id @default(autoincrement())
+  crawlId          String  @db.Uuid
+  projectId        String  @db.Uuid
+  url              String  @db.Text
+  refCount         Int     @default(0)
+  pageCount        Int     @default(0)
+  missingAltCount  Int     @default(0)
+  emptyAltCount    Int     @default(0)
+  sampleAlts       String[]
+  samplePages      String[]
+  statusCode       Int?    @db.SmallInt
+  contentType      String? @db.VarChar(120)
+  sizeBytes        Int?
+  pixelWidth       Int?
+  pixelHeight      Int?
+  format           String? @db.VarChar(20)
+  notAnImage       Boolean @default(false)
+  checkError       String? @db.VarChar(200)
+  /// Present on >= 80% of pages — Kishan's "site template" classifier.
+  isSiteTemplate   Boolean @default(false)
+
+  crawl Crawl @relation(fields: [crawlId], references: [id], onDelete: Cascade)
+
+  @@unique([crawlId, url])
+  @@index([crawlId, sizeBytes(sort: Desc)])
+  @@index([crawlId, refCount(sort: Desc)])
+  @@index([crawlId, missingAltCount])
+  @@map("image_assets")
+}
+
+// -----------------------------------------------------------------------------
+// Rulebook, findings, issues
+// -----------------------------------------------------------------------------
+
+/// The rulebook itself. Global rows have projectId NULL; a project may add or
+/// override rules with its own row keyed on the same slug.
+model Rule {
+  id               String          @id @default(uuid()) @db.Uuid
+  projectId        String?         @db.Uuid
+  /// Stable slug, e.g. "title-missing". This is what Issue/Finding reference.
+  slug             String          @db.VarChar(120)
+  version          Int             @default(1) @db.SmallInt
+  scope            RuleScope
+  category         String          @db.VarChar(60)
+  defaultSeverity  Severity
+  title            String          @db.Text
+  why              String          @db.Text
+  howToFix         String          @db.Text
+  detectionTier    DetectionTier   @default(OBSERVED)
+  automation       AutomationClass @default(HUMAN_ONLY)
+  autoFixable      Boolean         @default(false)
+  /// {"titleMaxChars":60,"titleMaxPx":561}
+  thresholds       Json?           @db.JsonB
+  /// Field names the rule needs. Missing => status skipped-data-unavailable.
+  dataRequirements String[]
+  enabled          Boolean         @default(true)
+  docsUrl          String?         @db.Text
+  createdAt        DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime        @updatedAt @db.Timestamptz(6)
+  deprecatedAt     DateTime?       @db.Timestamptz(6)
+
+  project  Project?   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  findings Finding[]
+  issues   Issue[]
+  mutes    RuleMute[]
+
+  @@unique([projectId, slug, version])
+  @@index([scope, category])
+  @@index([enabled, defaultSeverity])
+  @@index([automation])
+  @@map("rules")
+}
+
+/// Rule-level rollup for one crawl. ~110 rows per crawl. This is what the
+/// Issues screen lists — it never touches Page or Issue to render the list.
+model Finding {
+  id               String          @id @default(uuid()) @db.Uuid
+  crawlId          String          @db.Uuid
+  projectId        String          @db.Uuid
+  ruleId           String          @db.Uuid
+  ruleSlug         String          @db.VarChar(120)
+  scope            RuleScope
+  category         String          @db.VarChar(60)
+  severity         Severity
+  status           FindingStatus   @default(FAILING)
+
+  affectedPages    Int             @default(0)
+  affectedInstances Int            @default(0)
+  evaluatedPages   Int             @default(0)
+  /// sqrt(min(1, affectedPages/evaluatedPages)); 1 for site scope.
+  reach            Float?
+  /// Mean page importance across affected pages (depth x inlink weighting).
+  importance       Float?
+  /// From detection tier: observed 1.0 / derived 0.9 / heuristic 0.7.
+  confidence       Float?
+  /// round(100 * severityWeight * reach * importance * confidence)
+  priority         Int             @default(0) @db.SmallInt
+  /// weight(severity) * sqrt(affectedPages/evaluatedPages)
+  damage           Float?
+  effort           EffortLevel     @default(MEDIUM)
+  effortWhy        String?         @db.Text
+  automation       AutomationClass @default(HUMAN_ONLY)
+  /// All four multiplicands, exposed so the UI can explain the number.
+  priorityFactors  Json?           @db.JsonB
+  evidenceSummary  String?         @db.Text
+  /// Capped sample for the collapsed row — full list lives in Issue.
+  sampleUrls       String[]
+  /// Set when status = SKIPPED_DATA_UNAVAILABLE.
+  skipReason       String?         @db.Text
+  mutedAt          DateTime?       @db.Timestamptz(6)
+  mutedNote        String?         @db.Text
+  /// Soft pointer (P7) — the crawl where this rule first started failing.
+  firstSeenCrawlId String?         @db.Uuid
+  firstSeenAt      DateTime?       @db.Timestamptz(6)
+
+  crawl  Crawl   @relation(fields: [crawlId], references: [id], onDelete: Cascade)
+  rule   Rule    @relation(fields: [ruleId], references: [id], onDelete: Restrict)
+  issues Issue[]
+
+  @@unique([crawlId, ruleSlug])
+  @@index([crawlId, priority(sort: Desc)])
+  @@index([crawlId, status, severity])
+  @@index([crawlId, category])
+  @@index([crawlId, automation])
+  @@index([projectId])
+  @@map("findings")
+}
+
+/// One row per affected page (or per affected instance, for rules like
+/// image-missing-alt that fire once per offending element).
+model Issue {
+  id            String   @id @default(uuid()) @db.Uuid
+  crawlId       String   @db.Uuid
+  projectId     String   @db.Uuid
+  findingId     String   @db.Uuid
+  ruleId        String   @db.Uuid
+  ruleSlug      String   @db.VarChar(120)
+  pageId        String?  @db.Uuid
+  severity      Severity
+  category      String   @db.VarChar(60)
+  message       String   @db.Text
+  /// Dot-paths into the stored page record, e.g. "images[2].alt",
+  /// "structuredData[0].parsed.offers". Gate-asserted to resolve 100%.
+  evidencePaths String[]
+  /// Resolved values behind those paths, plus rule-specific numbers.
+  evidence      Json?    @db.JsonB
+  /// Cross-page evidence: the peer in a duplicate-title group, etc.
+  relatedPageId String?  @db.Uuid
+  priority      Int      @default(0) @db.SmallInt
+  /// Concrete proposed change for auto-safe rules. applied is always false here;
+  /// application is a separate ledger in a later phase.
+  proposedFix   Json?    @db.JsonB
+  createdAt     DateTime @default(now()) @db.Timestamptz(6)
+
+  crawl       Crawl   @relation(fields: [crawlId], references: [id], onDelete: Cascade)
+  finding     Finding @relation(fields: [findingId], references: [id], onDelete: Cascade)
+  rule        Rule    @relation(fields: [ruleId], references: [id], onDelete: Restrict)
+  page        Page?   @relation("IssuePage", fields: [pageId], references: [id], onDelete: Cascade)
+  relatedPage Page?   @relation("IssueRelatedPage", fields: [relatedPageId], references: [id], onDelete: SetNull)
+
+  aiRecommendations AiRecommendation[]
+  @@index([findingId, priority(sort: Desc)])
+  @@index([pageId, severity])
+  @@index([crawlId, ruleSlug])
+  @@index([crawlId, severity])
+  @@index([projectId])
+  @@map("issues")
+}
+
+/// "Accept this risk". Keyed per SITE, not per crawl, so it survives re-crawls.
+model RuleMute {
+  id        String    @id @default(uuid()) @db.Uuid
+  projectId String    @db.Uuid
+  siteId    String    @db.Uuid
+  ruleId    String    @db.Uuid
+  ruleSlug  String    @db.VarChar(120)
+  note      String?   @db.Text
+  mutedById String?   @db.Uuid
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  expiresAt DateTime? @db.Timestamptz(6)
+
+  site    Site  @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  rule    Rule  @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  mutedBy User? @relation(fields: [mutedById], references: [id], onDelete: SetNull)
+
+  @@unique([siteId, ruleSlug])
+  @@index([projectId])
+  @@map("rule_mutes")
+}
+
+// -----------------------------------------------------------------------------
+// Measurements (the 31-card grid + the 58-metric rollup)
+// -----------------------------------------------------------------------------
+
+model Measurement {
+  id           String          @id @default(uuid()) @db.Uuid
+  crawlId      String          @db.Uuid
+  projectId    String          @db.Uuid
+  /// Stable key, e.g. "imagesWithoutAlt". Joins run-to-run for the delta.
+  key          String          @db.VarChar(80)
+  label        String          @db.VarChar(160)
+  group        String          @db.VarChar(60)
+  displayOrder Int             @db.SmallInt
+  value        Float?
+  textValue    String?         @db.Text
+  unit         MeasurementUnit @default(COUNT)
+  /// Plain-language explainer shown in the card's info popover.
+  explainer    String?         @db.Text
+  direction    TrendDirection  @default(NEUTRAL)
+  /// Delta vs the previous completed crawl of the same site. NULL on first run —
+  /// rendered as "first run", never as 0.
+  previousValue Float?
+  delta         Float?
+  deltaPercent  Float?
+  /// Deep link target, e.g. "/pages?run=<id>&filter=missing-alt".
+  drilldownHref String?        @db.Text
+
+  crawl Crawl @relation(fields: [crawlId], references: [id], onDelete: Cascade)
+
+  @@unique([crawlId, key])
+  @@index([crawlId, group, displayOrder])
+  @@index([projectId, key])
+  @@map("measurements")
+}
+
+// -----------------------------------------------------------------------------
+// Activity stream (live + replay)
+// -----------------------------------------------------------------------------
+
+/// Append-only. Live: the browser subscribes via Supabase Realtime filtered on
+/// crawl_id. Replay: keyset-paginated on (crawlId, seq). Never updated, never
+/// read in bulk by the API.
+model ActivityLogEntry {
+  /// Global monotonic sequence — usable directly for per-crawl ordering.
+  seq        BigInt        @id @default(autoincrement())
+  crawlId    String        @db.Uuid
+  projectId  String        @db.Uuid
+  at         DateTime      @default(now()) @db.Timestamptz(3)
+  level      ActivityLevel @default(INFO)
+  kind       ActivityKind  @default(REQUEST)
+  message    String        @db.Text
+  url        String?       @db.Text
+  statusCode Int?          @db.SmallInt
+  depth      Int?          @db.SmallInt
+  durationMs Int?
+  renderedWith RenderedWith?
+  /// Progress snapshot at this moment: {done,total,rendered,heapMb,queued}.
+  progress   Json?         @db.JsonB
+  meta       Json?         @db.JsonB
+
+  crawl Crawl @relation(fields: [crawlId], references: [id], onDelete: Cascade)
+
+  @@index([crawlId, seq])
+  @@index([crawlId, level, seq])
+  @@index([projectId])
+  @@map("activity_log_entries")
+}
+
+// -----------------------------------------------------------------------------
+// Site files, sitemaps, AI-crawler access
+// -----------------------------------------------------------------------------
+
+model SiteFile {
+  id               String          @id @default(uuid()) @db.Uuid
+  crawlId          String          @db.Uuid
+  projectId        String          @db.Uuid
+  kind             SiteFileKind
+  url              String          @db.Text
+  statusCode       Int?            @db.SmallInt
+  bytes            Int?
+  parseStatus      FileParseStatus @default(NONE)
+  fetchedAt        DateTime?       @db.Timestamptz(6)
+  /// First 20,000 chars, for the in-app viewer. Full body is an Artifact.
+  contentPreview   String?         @db.Text
+  truncated        Boolean         @default(false)
+  /// Sitemap: declarations found inside robots.txt.
+  declaredSitemaps String[]
+  error            String?         @db.Text
+  meta             Json?           @db.JsonB
+  artifactId       String?         @db.Uuid
+
+  crawl       Crawl             @relation(fields: [crawlId], references: [id], onDelete: Cascade)
+  aiCrawlers  AiCrawlerVerdict[]
+
+  @@unique([crawlId, kind, url])
+  @@index([crawlId, kind])
+  @@index([projectId])
+  @@map("site_files")
+}
+
+/// 13 rows per crawl — the AI-crawler access table (GPTBot, OAI-SearchBot,
+/// ChatGPT-User, ClaudeBot, anthropic-ai, PerplexityBot, CCBot, Bytespider,
+/// cohere-ai, Google-Extended, Google-CloudVertexBot, Google-Agent,
+/// Google-NotebookLM). "partly-blocked" is a first-class verdict — collapsing it
+/// into "allowed" is the exact bug the audit found in the source implementation.
+model AiCrawlerVerdict {
+  id           String          @id @default(uuid()) @db.Uuid
+  siteFileId   String          @db.Uuid
+  crawlId      String          @db.Uuid
+  projectId    String          @db.Uuid
+  agent        String          @db.VarChar(80)
+  vendor       String          @db.VarChar(80)
+  purpose      String          @db.VarChar(200)
+  access       AiAccessVerdict @default(UNKNOWN)
+  /// Which robots.txt group matched: the agent's own name or "*".
+  matchedGroup String?         @db.VarChar(80)
+  /// The Disallow paths behind a blocked / partly-blocked verdict.
+  disallowed   String[]
+  displayOrder Int             @db.SmallInt
+
+  siteFile SiteFile @relation(fields: [siteFileId], references: [id], onDelete: Cascade)
+
+  @@unique([crawlId, agent])
+  @@index([crawlId, access])
+  @@index([projectId])
+  @@map("ai_crawler_verdicts")
+}
+
+model SitemapFile {
+  id         String          @id @default(uuid()) @db.Uuid
+  crawlId    String          @db.Uuid
+  projectId  String          @db.Uuid
+  url        String          @db.Text
+  parentId   String?         @db.Uuid
+  isIndex    Boolean         @default(false)
+  gzipped    Boolean         @default(false)
+  statusCode Int?            @db.SmallInt
+  urlCount   Int             @default(0)
+  parseStatus FileParseStatus @default(NONE)
+  error      String?         @db.Text
+  fetchedAt  DateTime?       @db.Timestamptz(6)
+  /// lastmod trust analysis: {total, withLastmod, future, largestSameDayGroup, identicalDate}
+  lastmodStats Json?         @db.JsonB
+
+  crawl   Crawl          @relation(fields: [crawlId], references: [id], onDelete: Cascade)
+  parent  SitemapFile?   @relation("SitemapTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children SitemapFile[] @relation("SitemapTree")
+  entries SitemapEntry[]
+
+  @@unique([crawlId, url])
+  @@index([crawlId])
+  @@index([parentId])
+  @@index([projectId])
+  @@map("sitemap_files")
+}
+
+model SitemapEntry {
+  id             BigInt    @id @default(autoincrement())
+  crawlId        String    @db.Uuid
+  projectId      String    @db.Uuid
+  sitemapFileId  String    @db.Uuid
+  loc            String    @db.Text
+  normalizedLoc  String    @db.Text
+  lastmod        DateTime? @db.Timestamptz(6)
+  changefreq     String?   @db.VarChar(20)
+  priority       Float?
+  /// Resolved at crawl close so the "in sitemap but never crawled" list is a
+  /// partial-index scan, not a 100k x 100k anti-join (§4.7).
+  crawled        Boolean   @default(false)
+  pageId         String?   @db.Uuid
+  statusCode     Int?      @db.SmallInt
+  inScope        Boolean   @default(true)
+
+  crawl       Crawl       @relation(fields: [crawlId], references: [id], onDelete: Cascade)
+  sitemapFile SitemapFile @relation(fields: [sitemapFileId], references: [id], onDelete: Cascade)
+  page        Page?       @relation(fields: [pageId], references: [id], onDelete: SetNull)
+
+  @@unique([crawlId, normalizedLoc])
+  @@index([crawlId, crawled])
+  @@index([sitemapFileId])
+  @@index([pageId])
+  @@index([projectId])
+  @@map("sitemap_entries")
+}
+
+// -----------------------------------------------------------------------------
+// Failures & blocked URLs
+// -----------------------------------------------------------------------------
+
+model Failure {
+  id            BigInt       @id @default(autoincrement())
+  crawlId       String       @db.Uuid
+  projectId     String       @db.Uuid
+  url           String       @db.Text
+  normalizedUrl String       @db.Text
+  failureClass  FailureClass
+  statusCode    Int?         @db.SmallInt
+  attempts      Int          @default(1) @db.SmallInt
+  depth         Int?         @db.SmallInt
+  parentUrl     String?      @db.Text
+  /// Raw error, capped at 300 chars by the writer.
+  errorMessage  String?      @db.Text
+  /// Plain-English cause: "Page not found (404)", "DNS lookup failed", ...
+  errorReason   String?      @db.VarChar(200)
+  firstSeenAt   DateTime     @default(now()) @db.Timestamptz(6)
+  lastAttemptAt DateTime?    @db.Timestamptz(6)
+
+  crawl Crawl @relation(fields: [crawlId], references: [id], onDelete: Cascade)
+
+  @@unique([crawlId, normalizedUrl])
+  @@index([crawlId, failureClass])
+  @@index([crawlId, statusCode])
+  @@index([projectId])
+  @@map("failures")
+}
+
+/// Not a failure. A URL we deliberately did not fetch, and why.
+model BlockedUrl {
+  id             BigInt        @id @default(autoincrement())
+  crawlId        String        @db.Uuid
+  projectId      String        @db.Uuid
+  url            String        @db.Text
+  normalizedUrl  String        @db.Text
+  reason         BlockedReason
+  /// The safety pattern or exclude term that matched.
+  matchedPattern String?       @db.VarChar(200)
+  /// The exact robots.txt directive line, and its line number.
+  robotsRule     String?       @db.Text
+  robotsLine     Int?          @db.SmallInt
+  robotsSource   String?       @db.Text
+  foundOn        String?       @db.Text
+  depth          Int?          @db.SmallInt
+
+  crawl Crawl @relation(fields: [crawlId], references: [id], onDelete: Cascade)
+
+  @@unique([crawlId, normalizedUrl, reason])
+  @@index([crawlId, reason])
+  @@index([projectId])
+  @@map("blocked_urls")
+}
+
+// -----------------------------------------------------------------------------
+// Duplicates
+// -----------------------------------------------------------------------------
+
+model DuplicateGroup {
+  id          String        @id @default(uuid()) @db.Uuid
+  crawlId     String        @db.Uuid
+  projectId   String        @db.Uuid
+  kind        DuplicateKind
+  /// Content hash for exact groups; NULL for near-duplicate LSH groups.
+  hash        String?       @db.Char(64)
+  /// Estimated Jaccard for near-duplicate groups.
+  similarity  Float?
+  memberCount Int           @default(0)
+  /// The shared title/description, or a 400-char content sample.
+  sampleValue String?       @db.Text
+
+  crawl   Crawl                  @relation(fields: [crawlId], references: [id], onDelete: Cascade)
+  members DuplicateGroupMember[]
+
+  @@index([crawlId, kind, memberCount(sort: Desc)])
+  @@index([crawlId, hash])
+  @@index([projectId])
+  @@map("duplicate_groups")
+}
+
+model DuplicateGroupMember {
+  groupId    String @db.Uuid
+  pageId     String @db.Uuid
+  crawlId    String @db.Uuid
+  projectId  String @db.Uuid
+  similarity Float?
+
+  group DuplicateGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  page  Page           @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@id([groupId, pageId])
+  @@index([pageId])
+  @@index([crawlId])
+  @@map("duplicate_group_members")
+}
+
+// -----------------------------------------------------------------------------
+// Comparison / diff
+// -----------------------------------------------------------------------------
+
+/// Computed once by a worker, never per request. Covers both run-over-run
+/// (same site) and competitor (different site) comparisons.
+model RunComparison {
+  id                   String         @id @default(uuid()) @db.Uuid
+  projectId            String         @db.Uuid
+  kind                 ComparisonKind @default(HISTORICAL)
+  baseCrawlId          String         @db.Uuid
+  headCrawlId          String         @db.Uuid
+  generatedAt          DateTime       @default(now()) @db.Timestamptz(6)
+
+  pagesAdded           Int            @default(0)
+  pagesRemoved         Int            @default(0)
+  pagesChanged         Int            @default(0)
+  pagesUnchanged       Int            @default(0)
+  newIssueCount        Int            @default(0)
+  fixedIssueCount      Int            @default(0)
+  persistingIssueCount Int            @default(0)
+  /// Same count, different pages — "12 fixed, 12 different ones broke".
+  churnedIssueCount    Int            @default(0)
+  healthDelta          Float?
+  /// NULL, never 0, when either run lacks analysis. The UI names both runs.
+  issueDiffAvailable   Boolean        @default(false)
+  summary              Json?          @db.JsonB
+
+  project   Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  baseCrawl Crawl          @relation("ComparisonBase", fields: [baseCrawlId], references: [id], onDelete: Cascade)
+  headCrawl Crawl          @relation("ComparisonHead", fields: [headCrawlId], references: [id], onDelete: Cascade)
+  entries   RunDiffEntry[]
+
+  @@unique([baseCrawlId, headCrawlId, kind])
+  @@index([projectId, generatedAt(sort: Desc)])
+  @@index([headCrawlId])
+  @@map("run_comparisons")
+}
+
+model RunDiffEntry {
+  id           BigInt         @id @default(autoincrement())
+  comparisonId String         @db.Uuid
+  projectId    String         @db.Uuid
+  changeKind   DiffChangeKind
+  /// Stable across runs — how a page is followed run-to-run.
+  pageKey      String?        @db.Char(12)
+  url          String?        @db.Text
+  basePageId   String?        @db.Uuid
+  headPageId   String?        @db.Uuid
+  ruleSlug     String?        @db.VarChar(120)
+  /// The changed field, e.g. "title", "statusCode", "wordCount".
+  field        String?        @db.VarChar(80)
+  baseValue    String?        @db.Text
+  headValue    String?        @db.Text
+  delta        Float?
+  severity     Severity?
+
+  comparison RunComparison @relation(fields: [comparisonId], references: [id], onDelete: Cascade)
+  basePage   Page?         @relation("DiffBasePage", fields: [basePageId], references: [id], onDelete: SetNull)
+  headPage   Page?         @relation("DiffHeadPage", fields: [headPageId], references: [id], onDelete: SetNull)
+
+  @@index([comparisonId, changeKind, id])
+  @@index([comparisonId, ruleSlug])
+  @@index([projectId])
+  @@map("run_diff_entries")
+}
+
+// -----------------------------------------------------------------------------
+// Storage pointers
+// -----------------------------------------------------------------------------
+
+/// A row exists only AFTER the object upload succeeded. No row = no object.
+model Artifact {
+  id          String       @id @default(uuid()) @db.Uuid
+  crawlId     String       @db.Uuid
+  projectId   String       @db.Uuid
+  pageId      String?      @db.Uuid
+  kind        ArtifactKind
+  bucket      String       @db.VarChar(60)
+  path        String       @db.Text
+  contentType String       @db.VarChar(120)
+  /// Bytes stored (post-gzip where applicable).
+  bytes       BigInt       @default(0)
+  /// Bytes before compression. NULL when not compressed.
+  rawBytes    BigInt?
+  compression String?      @db.VarChar(20)
+  checksum    String?      @db.Char(64)
+  capturedAt  DateTime     @default(now()) @db.Timestamptz(6)
+  /// Retention deadline. A nightly job deletes object + row past this.
+  expiresAt   DateTime?    @db.Timestamptz(6)
+
+  crawl Crawl @relation(fields: [crawlId], references: [id], onDelete: Cascade)
+  page  Page? @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@unique([bucket, path])
+  @@index([crawlId, kind])
+  @@index([pageId, kind])
+  @@index([expiresAt])
+  @@index([projectId])
+  @@map("artifacts")
+}
+
+// =============================================================================
+// Google Search Console (GSC) — dashboard integration
+// =============================================================================
+// Keyed directly by the Supabase user id (`sub`, a UUID) rather than through
+// User -> Project -> Site. The dashboard's GSC integration has no concept of a
+// Project/Site row — it mirrors the JSON store it replaces (storage/gsc/<userId>),
+// so these tables carry their own (userId, domain) scope. There is deliberately
+// no FK to `users`: a dashboard user may not have a User row yet, and a FK would
+// block inserts. Every query filters by userId at the application layer.
+//
+// Date *keys* (date, windowStart, windowEnd, attempt date) stay as text so the
+// dashboard's string comparisons and window math keep working unchanged; real
+// timestamps use timestamptz and are converted to ISO strings at the store API.
+
+/// One Google account connection, per user. Tokens stored encrypted.
+model GscConnection {
+  userId              String    @id @db.Uuid
+  googleEmail         String?   @db.VarChar(320)
+  /// AES-256-GCM ciphertext — never the raw refresh token.
+  refreshTokenEnc     String    @db.Text
+  /// Short-lived access token, cached to avoid a refresh round-trip per call.
+  accessToken         String?   @db.Text
+  accessTokenExpiresAt DateTime? @db.Timestamptz(6)
+  scopes              String    @db.Text
+  createdAt           DateTime  @db.Timestamptz(6)
+  updatedAt           DateTime  @db.Timestamptz(6)
+
+  @@map("gsc_connections")
+}
+
+/// A Search Console property linked to one of the dashboard's sites.
+model GscLinkedProperty {
+  userId          String   @db.Uuid
+  domain          String   @db.VarChar(255)
+  siteUrl         String   @db.Text
+  propertyType    String   @db.VarChar(16)
+  permissionLevel String?  @db.VarChar(64)
+  lastSyncedAt    DateTime? @db.Timestamptz(6)
+  createdAt       DateTime @db.Timestamptz(6)
+
+  @@id([userId, domain])
+  @@index([userId])
+  @@map("gsc_linked_properties")
+}
+
+/// Per-(user, domain) bundle metadata for synced metrics (the rows themselves
+/// live in gsc_page_metrics / gsc_breakdowns).
+model GscMetricsMeta {
+  userId       String   @db.Uuid
+  domain       String   @db.VarChar(255)
+  siteUrl      String   @db.Text
+  propertyType String   @db.VarChar(16)
+  lastSyncedAt DateTime? @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(6)
+
+  @@id([userId, domain])
+  @@index([userId])
+  @@map("gsc_metrics_meta")
+}
+
+/// One stored page-metric row (per day, per page, per search type).
+model GscPageMetric {
+  userId        String  @db.Uuid
+  domain        String  @db.VarChar(255)
+  /// ISO date key (YYYY-MM-DD) — kept as text so window math stays string-based.
+  date          String  @db.VarChar(10)
+  pageUrl       String  @db.Text
+  normalizedUrl String? @db.Text
+  searchType    String  @db.VarChar(8)
+  clicks        Int
+  impressions   Int
+  ctr           Float
+  position      Float
+
+  @@id([userId, domain, date, pageUrl, searchType])
+  @@index([userId, domain, searchType, date])
+  @@map("gsc_page_metrics")
+}
+
+/// One stored breakdown row (per window, per dimension).
+model GscBreakdown {
+  userId      String  @db.Uuid
+  domain      String  @db.VarChar(255)
+  dimension   String  @db.VarChar(24)
+  searchType  String  @db.VarChar(8)
+  keyValue    String  @db.Text
+  windowStart String  @db.VarChar(10)
+  windowEnd   String  @db.VarChar(10)
+  clicks      Int
+  impressions Int
+  ctr         Float
+  position    Float
+
+  @@id([userId, domain, dimension, searchType, windowStart, windowEnd, keyValue])
+  @@index([userId, domain, searchType])
+  @@map("gsc_breakdowns")
+}
+
+/// One URL Inspection result (per user, domain, page).
+model GscInspection {
+  userId          String    @db.Uuid
+  domain          String    @db.VarChar(255)
+  pageUrl         String    @db.Text
+  verdict         String    @db.VarChar(24)
+  coverageState   String?   @db.Text
+  robotsTxtState  String?   @db.Text
+  indexingState   String?   @db.Text
+  pageFetchState  String?   @db.Text
+  googleCanonical String?   @db.Text
+  userCanonical   String?   @db.Text
+  lastCrawlTime   DateTime? @db.Timestamptz(6)
+  crawledAs       String?   @db.Text
+  sitemaps        String[]
+  raw             Json?     @db.JsonB
+  inspectedAt     DateTime  @db.Timestamptz(6)
+
+  @@id([userId, domain, pageUrl])
+  @@index([userId, domain])
+  @@map("gsc_inspections")
+}
+
+/// One URL Inspection API call, for quota metering (successful or not).
+model GscInspectionAttempt {
+  id        BigInt  @id @default(autoincrement())
+  userId    String  @db.Uuid
+  domain    String  @db.VarChar(255)
+  /// Pacific date key (YYYY-MM-DD) — Google's quota resets at midnight Pacific.
+  date      String  @db.VarChar(10)
+  succeeded Boolean
+
+  @@index([userId, domain, date])
+  @@map("gsc_inspection_attempts")
+}
+
+/// One AI-authored exact-fix recommendation per affected instance (qi-feature-plam.md §9).
+/// Mirrors poc/seo-dashboard/lib/ai-recommend/types.ts's AiRecommendation — the POC dashboard
+/// writes ai-recommendations.json via server-side fs, and this table is the production persistence
+/// target a future packages/db/src/sync/ pass writes into. Nothing writes it yet; keep the column
+/// set in sync with the TS type. Kept as its own table (not Issue.proposedFix, which is scoped to
+/// auto-safe deterministic fixes) so the "AI-authored content" trust boundary stays explicit.
+model AiRecommendation {
+  id                     String   @id @default(uuid()) @db.Uuid
+  crawlId                String   @db.Uuid
+  issueId                String   @db.Uuid
+  projectId              String   @db.Uuid
+
+  ruleSlug               String   @db.VarChar(120)
+  category               String   @db.VarChar(60)
+  url                    String?  @db.Text
+  pageId                 String?  @db.Uuid
+  /// Identity within a rule+page for multi-instance rules — "images[3]". Null for single-instance.
+  instanceKey            String?  @db.VarChar(120)
+
+  model                  String   @db.VarChar(60)
+  promptVersion          String   @db.VarChar(20)
+  whatIsWrong            String   @db.Text
+  currentValue           String?  @db.Text
+  recommendedValue       String   @db.Text
+  recommendedValuePlain  String?  @db.Text
+  whyThisValue           String   @db.Text
+  basedOn                Json     @db.JsonB
+  howToApply             String   @db.Text
+  confidence             Float
+  selfReportedConfidence Float?
+  needsHumanInput        Boolean  @default(false)
+  needsHumanInputReason  String?  @db.Text
+  validation             Json     @db.JsonB
+  /// §11.3 reuse fingerprints — a later run reuses the value only when both match (and the model +
+  /// promptVersion are the same). Optional: older rows lack them and are never reused.
+  contentHash            String?  @db.Char(64)
+  evidenceSig            String?  @db.Char(64)
+  createdAt              DateTime @default(now()) @db.Timestamptz(6)
+
+  crawl Crawl @relation(fields: [crawlId], references: [id], onDelete: Cascade)
+  issue Issue @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  /// One row per affected instance (image-missing-alt fires once per image). The plan's §10
+  /// @@unique([issueId]) was relaxed to include instanceKey because the shipped feature produces
+  /// per-instance recommendations, not one per issue.
+  @@unique([issueId, instanceKey])
+  @@index([crawlId])
+  @@index([projectId, needsHumanInput])
+  @@index([ruleSlug])
+  @@map("ai_recommendations")
+}
