@@ -50,8 +50,6 @@ interface SourceConfig {
   name: string;
   siteUrl: string;
   credentials: Record<string, string>;
-  /** True for the single connection Fix & Apply writes through. Only one per user. */
-  active: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -88,7 +86,6 @@ interface SourceRow {
   credentials: Record<string, string> | null;
   status: SourceStatus | null;
   capabilities: SourceCapabilities | null;
-  active: boolean | null;
   created_at: string;
   updated_at: string;
 }
@@ -113,7 +110,6 @@ function rowToConfig(row: SourceRow): SourceConfig {
     name: row.name,
     siteUrl: row.site_url,
     credentials: row.credentials ?? {},
-    active: row.active ?? false,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -394,76 +390,6 @@ sourcesRouter.post(
       source: { id: match.id, kind: match.kind, name: match.name, siteUrl: match.siteUrl },
       connection: { state: status.state, lastCheckedAt: status.lastCheckedAt, error: status.error },
     });
-  }),
-);
-
-/** GET /active — the single source this user has marked active (or null). Registered before /:id so
- *  "active" is never captured as an id. Fix & Apply reads this to decide where to write. */
-sourcesRouter.get(
-  "/active",
-  asyncHandler(async (req, res) => {
-    const supabase = client(res);
-    if (!supabase) return;
-    const uid = userId(req, res);
-    if (!uid) return;
-
-    const { data, error } = await supabase
-      .from("sources")
-      .select("*")
-      .eq("user_id", uid)
-      .eq("active", true)
-      .order("updated_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (error) throw new Error(`[sources] active lookup failed: ${error.message}`);
-    res.json({ active: data ? rowToConfig(data as SourceRow) : null });
-  }),
-);
-
-/** POST /:id/activate — mark this source active and every other of this user's sources inactive.
- *  Single-active is enforced here (two UPDATEs), not by a DB constraint. */
-sourcesRouter.post(
-  "/:id/activate",
-  asyncHandler(async (req, res) => {
-    const supabase = client(res);
-    if (!supabase) return;
-    const uid = userId(req, res);
-    if (!uid) return;
-
-    const { id } = req.params;
-    if (!isSafeId(id)) {
-      res.status(422).json({ error: "id must be a safe id." });
-      return;
-    }
-    const target = await loadRow(supabase, uid, id);
-    if (!target) {
-      res.status(404).json({ error: `Source "${id}" not found.` });
-      return;
-    }
-
-    const now = new Date().toISOString();
-    // Clear any currently-active source for this user, then set this one.
-    const { error: clearErr } = await supabase
-      .from("sources")
-      .update({ active: false, updated_at: now })
-      .eq("user_id", uid)
-      .eq("active", true);
-    if (clearErr) throw new Error(`[sources] activate clear failed: ${clearErr.message}`);
-
-    const { error: setErr } = await supabase
-      .from("sources")
-      .update({ active: true, updated_at: now })
-      .eq("user_id", uid)
-      .eq("id", id);
-    if (setErr) throw new Error(`[sources] activate set failed: ${setErr.message}`);
-
-    const { data, error: listErr } = await supabase
-      .from("sources")
-      .select("*")
-      .eq("user_id", uid)
-      .order("created_at", { ascending: true });
-    if (listErr) throw new Error(`[sources] activate relist failed: ${listErr.message}`);
-    res.json({ ok: true, sources: (data as SourceRow[]).map(rowToConfig) });
   }),
 );
 

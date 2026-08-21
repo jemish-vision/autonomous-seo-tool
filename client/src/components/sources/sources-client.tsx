@@ -3,7 +3,7 @@ import { Plug, Plus } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { SourceTable } from "./source-table";
 import { AddSourceForm } from "./add-source-form";
-import { useSources, useConnectSource, useDeleteSource, useActivateSource } from "@/api/sources";
+import { useSources, useConnectSource, useDeleteSource } from "@/api/sources";
 import type { SourceConfig, SourceStatus, SourceCapabilities } from "@/lib/types-sources";
 
 interface Meta {
@@ -18,7 +18,6 @@ export function SourcesClient({ initialSources }: { initialSources: SourceConfig
 
   const connectMut = useConnectSource();
   const deleteMut = useDeleteSource();
-  const activateMut = useActivateSource();
 
   // Per-source live status/capabilities (from a connect/health-check). Keyed by source id.
   const [meta, setMeta] = useState<Record<string, Meta>>({});
@@ -54,14 +53,6 @@ export function SourcesClient({ initialSources }: { initialSources: SourceConfig
       });
     },
     [deleteMut],
-  );
-
-  /** Mark a source active — the server flips all others inactive; invalidation re-drives the list. */
-  const handleActivate = useCallback(
-    async (id: string) => {
-      await activateMut.mutateAsync(id);
-    },
-    [activateMut],
   );
 
   /** Auto-connect each source once on first appearance to fetch live status (matches old app). */
@@ -120,7 +111,6 @@ export function SourcesClient({ initialSources }: { initialSources: SourceConfig
           meta={meta}
           onConnect={handleConnect}
           onDelete={handleDelete}
-          onActivate={handleActivate}
         />
       )}
 

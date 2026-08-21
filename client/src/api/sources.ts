@@ -21,33 +21,11 @@ import type {
 } from "@/lib/types-sources";
 
 const SOURCES_KEY = ["sources"] as const;
-const ACTIVE_SOURCE_KEY = ["sources", "active"] as const;
 
 export function useSources() {
   return useQuery({
     queryKey: SOURCES_KEY,
     queryFn: () => apiGet<SourceConfig[]>("/api/sources"),
-  });
-}
-
-/** The user's currently active source (Fix & Apply target), or null if none is active. */
-export function useActiveSource() {
-  return useQuery({
-    queryKey: ACTIVE_SOURCE_KEY,
-    queryFn: () => apiGet<{ active: SourceConfig | null }>("/api/sources/active"),
-  });
-}
-
-/** Mark a source active (all others for this user become inactive), then refresh list + active. */
-export function useActivateSource() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
-      apiSend<{ ok: true; sources: SourceConfig[] }>("POST", `/api/sources/${id}/activate`, {}),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: SOURCES_KEY });
-      qc.invalidateQueries({ queryKey: ACTIVE_SOURCE_KEY });
-    },
   });
 }
 

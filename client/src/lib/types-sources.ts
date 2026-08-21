@@ -34,8 +34,6 @@ export interface SourceConfig {
    *   shopify:   { apiKey, apiSecret, accessToken }
    */
   credentials: Record<string, string>;
-  /** Whether this is the user's currently active source (Fix & Apply target). */
-  active?: boolean;
   createdAt: string;
   updatedAt: string;
 }
