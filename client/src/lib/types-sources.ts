@@ -9,11 +9,12 @@
 
 // ── Source kinds ──────────────────────────────────────────────────────────
 
-export type SourceKind = "wordpress" | "shopify";
+export type SourceKind = "wordpress" | "shopify" | "cloudarcade";
 
 export const SOURCE_KIND_LABELS: Record<SourceKind, string> = {
   wordpress: "WordPress",
   shopify: "Shopify",
+  cloudarcade: "ATM Games (CloudArcade)",
 };
 
 // ── Persisted config (stored in storage/sources.json) ─────────────────────
@@ -33,6 +34,8 @@ export interface SourceConfig {
    *   shopify:   { apiKey, apiSecret, accessToken }
    */
   credentials: Record<string, string>;
+  /** Whether this is the user's currently active source (Fix & Apply target). */
+  active?: boolean;
   createdAt: string;
   updatedAt: string;
 }

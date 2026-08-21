@@ -10,13 +10,15 @@
     "build": "tsc -p tsconfig.json",
     "prisma:generate": "prisma generate --schema prisma/schema.prisma",
     "typecheck": "tsc --noEmit",
-    "smoke": "tsx scripts/smoke-test.mts"
+    "smoke": "tsx scripts/smoke-test.mts",
+    "setup:crawler": "cd crawler && npm install"
   },
   "dependencies": {
     "@prisma/client": "6.19.3",
     "@supabase/supabase-js": "^2.112.3",
     "cors": "^2.8.5",
     "express": "^4.21.2",
+    "mysql2": "^3.23.4",
     "zod": "^3.24.1"
   },
   "devDependencies": {

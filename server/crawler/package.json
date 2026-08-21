@@ -5,7 +5,7 @@
   "type": "module",
   "description": "POC-1 crawler for the Autonomous SEO Platform — hybrid static-first Crawlee crawler with Playwright escalation",
   "scripts": {
-    "postinstall": "node scripts/patch-crawlee-windowshide.mjs",
+    "postinstall": "node scripts/patch-crawlee-windowshide.mjs && npx playwright install chromium",
     "crawl": "tsx src/index.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",

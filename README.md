@@ -11,7 +11,13 @@ seo-platform/
 
 They are **not** a monorepo/workspace — two separate `package.json`, installed and run independently.
 
-## Run it
+## Setup on a fresh clone
+
+**Prerequisites:** Node **20.6+** (the crawler is spawned with `node --import tsx`), and the two
+`.env` files — they are gitignored (secrets), so a fresh clone must create them:
+- `server/.env` — `DATABASE_URL`, `DIRECT_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
+  `PORT=4000`, `CLIENT_ORIGIN=http://localhost:5173`, `AUTH_REQUIRED=true` (+ optional `GOOGLE_*`/`GSC_*`/`GEMINI_API_KEY`).
+- `client/.env` — `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_API_BASE`.
 
 Two terminals:
 
@@ -19,8 +25,9 @@ Two terminals:
 # terminal 1 — API
 cd server
 npm install
+npm run setup:crawler        # installs the bundled crawler's deps + Chromium (required for "New crawl")
 npm run prisma:generate      # generates the Prisma client into src/db/generated
-npm run dev                  # http://localhost:4000  (GET /api/ready to check DB)
+PORT=4000 npm run dev        # http://localhost:4000  (GET /api/ready to check DB)
 
 # terminal 2 — UI
 cd client
@@ -28,8 +35,27 @@ npm install
 npm run dev                  # http://localhost:5173  (Vite proxies /api -> :4000)
 ```
 
-Sign in with a Supabase user (same Supabase project as the old app). The API's `/api/ready`
-returns `{ ready: true, db: "up" }` when Postgres is reachable.
+Sign in with a Supabase user. `/api/ready` returns `{ ready: true, db: "up" }` when Postgres is reachable.
+
+### The bundled crawler (required for "New crawl")
+
+Crawl execution runs a **vendored worker** at `server/crawler/` (its own package, spawned as a child
+process). It needs its own deps **and a Chromium browser**, so after `npm install` in `server/`, run
+**once**:
+
+```bash
+cd server && npm run setup:crawler        # = cd crawler && npm install
+                                          #   (crawler postinstall patches Crawlee + runs `npx playwright install chromium`, ~150 MB one-time)
+```
+
+Without this, new crawls fail immediately with **exit code 1** (the spawn can't find `tsx`/Crawlee, or
+Chromium is missing for JS-heavy pages). Existing runs already in Supabase still browse fine.
+
+### Gotchas
+- **`PORT`** — some shells export an empty `PORT`, which makes the server bind port 0. Start it as
+  `PORT=4000 npm run dev` (or set `PORT=4000` in `server/.env` and ensure your shell doesn't override it).
+- **`CLIENT_ORIGIN`** must equal the client's actual origin (Vite uses 5173, jumps to 5174 if taken) or
+  CORS blocks every API call.
 
 ## Architecture
 
