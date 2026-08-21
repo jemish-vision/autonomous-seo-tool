@@ -33,15 +33,10 @@ import { randomBytes } from "node:crypto";
 import { asyncHandler } from "../../middleware/error.js";
 import { getServiceClient } from "../../supabase/service.js";
 import { isSafeId } from "../../lib/apiShared.js";
-import {
-  readCloudArcadeCredentials,
-  cloudArcadeConnect,
-  cloudArcadeApply,
-} from "./cloudarcadeConnector.js";
 
 // ── Types (platform-neutral contract, mirrors client/src/lib/types-sources.ts) ──────────────
 
-type SourceKind = "wordpress" | "shopify" | "cloudarcade";
+type SourceKind = "wordpress" | "shopify";
 type SourceConnectionState = "connected" | "disconnected" | "error" | "unchecked";
 
 interface SourceConfig {
@@ -50,8 +45,6 @@ interface SourceConfig {
   name: string;
   siteUrl: string;
   credentials: Record<string, string>;
-  /** True for the single connection Fix & Apply writes through. Only one per user. */
-  active: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -88,7 +81,6 @@ interface SourceRow {
   credentials: Record<string, string> | null;
   status: SourceStatus | null;
   capabilities: SourceCapabilities | null;
-  active: boolean | null;
   created_at: string;
   updated_at: string;
 }
@@ -113,14 +105,13 @@ function rowToConfig(row: SourceRow): SourceConfig {
     name: row.name,
     siteUrl: row.site_url,
     credentials: row.credentials ?? {},
-    active: row.active ?? false,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
 }
 
 function generateId(kind: SourceKind): string {
-  const prefix = kind === "wordpress" ? "wp" : kind === "shopify" ? "shopify" : kind === "cloudarcade" ? "ca" : kind;
+  const prefix = kind === "wordpress" ? "wp" : kind === "shopify" ? "shopify" : kind;
   const suffix = randomBytes(4).toString("hex");
   return `${prefix}-${suffix}`;
 }
@@ -317,8 +308,8 @@ sourcesRouter.post(
       res.status(400).json({ error: "Missing required fields: kind, name, siteUrl" });
       return;
     }
-    if (kind !== "wordpress" && kind !== "shopify" && kind !== "cloudarcade") {
-      res.status(400).json({ error: `Unsupported source kind: "${String(kind)}". Supported: wordpress, shopify, cloudarcade.` });
+    if (kind !== "wordpress" && kind !== "shopify") {
+      res.status(400).json({ error: `Unsupported source kind: "${String(kind)}". Supported: wordpress, shopify.` });
       return;
     }
     try {
@@ -394,76 +385,6 @@ sourcesRouter.post(
       source: { id: match.id, kind: match.kind, name: match.name, siteUrl: match.siteUrl },
       connection: { state: status.state, lastCheckedAt: status.lastCheckedAt, error: status.error },
     });
-  }),
-);
-
-/** GET /active — the single source this user has marked active (or null). Registered before /:id so
- *  "active" is never captured as an id. Fix & Apply reads this to decide where to write. */
-sourcesRouter.get(
-  "/active",
-  asyncHandler(async (req, res) => {
-    const supabase = client(res);
-    if (!supabase) return;
-    const uid = userId(req, res);
-    if (!uid) return;
-
-    const { data, error } = await supabase
-      .from("sources")
-      .select("*")
-      .eq("user_id", uid)
-      .eq("active", true)
-      .order("updated_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (error) throw new Error(`[sources] active lookup failed: ${error.message}`);
-    res.json({ active: data ? rowToConfig(data as SourceRow) : null });
-  }),
-);
-
-/** POST /:id/activate — mark this source active and every other of this user's sources inactive.
- *  Single-active is enforced here (two UPDATEs), not by a DB constraint. */
-sourcesRouter.post(
-  "/:id/activate",
-  asyncHandler(async (req, res) => {
-    const supabase = client(res);
-    if (!supabase) return;
-    const uid = userId(req, res);
-    if (!uid) return;
-
-    const { id } = req.params;
-    if (!isSafeId(id)) {
-      res.status(422).json({ error: "id must be a safe id." });
-      return;
-    }
-    const target = await loadRow(supabase, uid, id);
-    if (!target) {
-      res.status(404).json({ error: `Source "${id}" not found.` });
-      return;
-    }
-
-    const now = new Date().toISOString();
-    // Clear any currently-active source for this user, then set this one.
-    const { error: clearErr } = await supabase
-      .from("sources")
-      .update({ active: false, updated_at: now })
-      .eq("user_id", uid)
-      .eq("active", true);
-    if (clearErr) throw new Error(`[sources] activate clear failed: ${clearErr.message}`);
-
-    const { error: setErr } = await supabase
-      .from("sources")
-      .update({ active: true, updated_at: now })
-      .eq("user_id", uid)
-      .eq("id", id);
-    if (setErr) throw new Error(`[sources] activate set failed: ${setErr.message}`);
-
-    const { data, error: listErr } = await supabase
-      .from("sources")
-      .select("*")
-      .eq("user_id", uid)
-      .order("created_at", { ascending: true });
-    if (listErr) throw new Error(`[sources] activate relist failed: ${listErr.message}`);
-    res.json({ ok: true, sources: (data as SourceRow[]).map(rowToConfig) });
   }),
 );
 
@@ -584,50 +505,6 @@ sourcesRouter.post(
       return;
     }
     const source = rowToConfig(row);
-
-    // ── CloudArcade (ATM Games) — direct MySQL health check ──
-    if (source.kind === "cloudarcade") {
-      const now = new Date().toISOString();
-      const creds = readCloudArcadeCredentials(source.credentials);
-      if (!creds) {
-        const message = "Missing database credentials (need dbHost, dbName, dbUser).";
-        const status: SourceStatus = { sourceId: id, state: "error", lastCheckedAt: now, error: message };
-        await persistStatus(supabase, uid, status);
-        res.status(400).json({ ok: false, error: message, status });
-        return;
-      }
-      try {
-        const counts = await cloudArcadeConnect(creds);
-        const status: SourceStatus = {
-          sourceId: id,
-          state: "connected",
-          lastCheckedAt: now,
-          meta: { kind: "cloudarcade", database: creds.dbName, ...counts },
-        };
-        await persistStatus(supabase, uid, status);
-        const caps: SourceCapabilities = {
-          sourceId: id,
-          pages: counts.pages > 0,
-          posts: counts.posts > 0,
-          media: false,
-          fetchedAt: now,
-          capabilities: {
-            games: { read: true, write: true },
-            posts: { read: true, write: true },
-            pages: { read: true, write: true },
-            categories: { read: true, write: true },
-          },
-        };
-        await persistCapabilities(supabase, uid, caps);
-        res.json({ ok: true, status, capabilities: counts });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        const status: SourceStatus = { sourceId: id, state: "error", lastCheckedAt: now, error: message };
-        await persistStatus(supabase, uid, status);
-        res.status(502).json({ ok: false, error: message, status });
-      }
-      return;
-    }
 
     if (source.kind !== "wordpress") {
       res.status(400).json({ error: `Connection testing not yet supported for kind "${source.kind}".` });
@@ -830,6 +707,10 @@ sourcesRouter.post(
       return;
     }
     const source = rowToConfig(row);
+    if (source.kind !== "wordpress") {
+      res.status(400).json({ error: `SEO write not yet supported for kind "${source.kind}".` });
+      return;
+    }
 
     const body = (req.body ?? {}) as {
       type?: string;
@@ -841,43 +722,6 @@ sourcesRouter.post(
     };
     if (!body.changes) {
       res.status(400).json({ error: "Missing required field: changes" });
-      return;
-    }
-
-    // ── CloudArcade (ATM Games) — direct MySQL write, synchronous (never queued) ──
-    if (source.kind === "cloudarcade") {
-      const creds = readCloudArcadeCredentials(source.credentials);
-      if (!creds) {
-        res.status(400).json({ error: "Missing database credentials (need dbHost, dbName, dbUser)." });
-        return;
-      }
-      if (typeof body.url !== "string" || !body.url) {
-        res.status(400).json({ error: "CloudArcade writes require the page url." });
-        return;
-      }
-      // Coerce every change value to a string — CloudArcade stores plain text meta fields.
-      const changes: Record<string, string> = {};
-      for (const [k, v] of Object.entries(body.changes)) {
-        if (typeof v === "string") changes[k] = v;
-        else if (v != null) changes[k] = String(v);
-      }
-      try {
-        const receipt = await cloudArcadeApply(creds, body.url, changes);
-        res.json({
-          success: true,
-          applied: true,
-          queued: false,
-          resource: receipt.resource,
-          changes: receipt.changes,
-        });
-      } catch (err) {
-        res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
-      }
-      return;
-    }
-
-    if (source.kind !== "wordpress") {
-      res.status(400).json({ error: `SEO write not yet supported for kind "${source.kind}".` });
       return;
     }
     const writeKind: "seo" | "content" | "media" =

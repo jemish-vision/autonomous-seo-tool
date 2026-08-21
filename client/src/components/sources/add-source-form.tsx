@@ -9,7 +9,6 @@ import type { SourceKind } from "@/lib/types-sources";
 const KIND_OPTIONS: { value: SourceKind; label: string }[] = [
   { value: "wordpress", label: "WordPress" },
   { value: "shopify", label: "Shopify" },
-  { value: "cloudarcade", label: "ATM Games (CloudArcade)" },
 ];
 
 type FlowState = "form" | "pairing" | "waiting" | "success" | "error";
@@ -44,12 +43,6 @@ export function AddSourceForm({ open, onClose }: Props) {
   const [apiKey, setApiKey] = useState("");
   const [apiSecret, setApiSecret] = useState("");
   const [accessToken, setAccessToken] = useState("");
-  // CloudArcade (ATM Games) direct MySQL credentials
-  const [dbHost, setDbHost] = useState("127.0.0.1");
-  const [dbPort, setDbPort] = useState("3306");
-  const [dbName, setDbName] = useState("atmh_atmnewmain");
-  const [dbUser, setDbUser] = useState("root");
-  const [dbPassword, setDbPassword] = useState("");
 
   // WordPress: pairing (default) vs. direct username/password.
   const [useCredentials, setUseCredentials] = useState(false);
@@ -76,11 +69,6 @@ export function AddSourceForm({ open, onClose }: Props) {
     setApiKey("");
     setApiSecret("");
     setAccessToken("");
-    setDbHost("127.0.0.1");
-    setDbPort("3306");
-    setDbName("atmh_atmnewmain");
-    setDbUser("root");
-    setDbPassword("");
     setUseCredentials(false);
     setFlowState("form");
     setPairingCode("");
@@ -115,20 +103,11 @@ export function AddSourceForm({ open, onClose }: Props) {
             ...(username.trim() ? { username: username.trim() } : {}),
             ...(appPassword.trim() ? { appPassword: appPassword.trim() } : {}),
           }
-        : kind === "cloudarcade"
-          ? {
-              dbHost: dbHost.trim() || "127.0.0.1",
-              dbPort: dbPort.trim() || "3306",
-              dbName: dbName.trim() || "atmh_atmnewmain",
-              dbUser: dbUser.trim() || "root",
-              // Always send dbPassword (even ""), so a root-with-no-password DB connects.
-              dbPassword,
-            }
-          : {
-              ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
-              ...(apiSecret.trim() ? { apiSecret: apiSecret.trim() } : {}),
-              ...(accessToken.trim() ? { accessToken: accessToken.trim() } : {}),
-            };
+        : {
+            ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+            ...(apiSecret.trim() ? { apiSecret: apiSecret.trim() } : {}),
+            ...(accessToken.trim() ? { accessToken: accessToken.trim() } : {}),
+          };
 
     try {
       await createMut.mutateAsync({
@@ -367,7 +346,7 @@ export function AddSourceForm({ open, onClose }: Props) {
                   type="url"
                   value={siteUrl}
                   onChange={(e) => setSiteUrl(e.target.value)}
-                  placeholder={kind === "cloudarcade" ? "http://www.atmhtml5games.com" : "https://example.com"}
+                  placeholder="https://example.com"
                   required
                   className={inputClass}
                 />
@@ -461,87 +440,6 @@ export function AddSourceForm({ open, onClose }: Props) {
                 </>
               )}
 
-              {/* CloudArcade (ATM Games) — direct MySQL connection */}
-              {kind === "cloudarcade" && (
-                <>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label htmlFor="source-db-host" className={labelClass}>
-                        Database host
-                      </label>
-                      <input
-                        id="source-db-host"
-                        type="text"
-                        value={dbHost}
-                        onChange={(e) => setDbHost(e.target.value)}
-                        placeholder="127.0.0.1"
-                        autoComplete="off"
-                        className={inputClass}
-                      />
-                    </div>
-                    <div>
-                      <label htmlFor="source-db-port" className={labelClass}>
-                        Port
-                      </label>
-                      <input
-                        id="source-db-port"
-                        type="text"
-                        value={dbPort}
-                        onChange={(e) => setDbPort(e.target.value)}
-                        placeholder="3306"
-                        autoComplete="off"
-                        className={inputClass}
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <label htmlFor="source-db-name" className={labelClass}>
-                      Database name
-                    </label>
-                    <input
-                      id="source-db-name"
-                      type="text"
-                      value={dbName}
-                      onChange={(e) => setDbName(e.target.value)}
-                      placeholder="atmh_atmnewmain"
-                      autoComplete="off"
-                      className={inputClass}
-                    />
-                  </div>
-                  <div>
-                    <label htmlFor="source-db-user" className={labelClass}>
-                      Database user
-                    </label>
-                    <input
-                      id="source-db-user"
-                      type="text"
-                      value={dbUser}
-                      onChange={(e) => setDbUser(e.target.value)}
-                      placeholder="root"
-                      autoComplete="off"
-                      className={inputClass}
-                    />
-                  </div>
-                  <div>
-                    <label htmlFor="source-db-password" className={labelClass}>
-                      Database password
-                    </label>
-                    <input
-                      id="source-db-password"
-                      type="password"
-                      value={dbPassword}
-                      onChange={(e) => setDbPassword(e.target.value)}
-                      placeholder="Leave blank if none"
-                      autoComplete="off"
-                      className={inputClass}
-                    />
-                    <p className="mt-1 text-[11px] text-faint">
-                      Connects directly to the CloudArcade MySQL database to write SEO fields.
-                    </p>
-                  </div>
-                </>
-              )}
-
               <button
                 type="submit"
                 disabled={isPairing ? pairMut.isPending : createMut.isPending}
@@ -557,9 +455,7 @@ export function AddSourceForm({ open, onClose }: Props) {
                     : "Generate pairing code"
                   : createMut.isPending
                     ? "Adding…"
-                    : kind === "cloudarcade"
-                      ? "Add connection"
-                      : "Add source"}
+                    : "Add source"}
               </button>
             </form>
 
